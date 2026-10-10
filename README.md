@@ -95,12 +95,14 @@ The knee angle is the interior angle between hip, knee and ankle in the image (1
 
 | State | Rule |
 |---|---|
-| Not armed | Until you've been seen standing (above 160°). Walking into frame in a crouch won't ding. |
+| Not armed | Until you've been seen standing (above 160°) for a quarter of a second. Walking into frame in a crouch won't ding. |
 | Standing | Angle above 160°. |
 | Descending | Angle drops below 150°. |
-| **Depth: ding** | First frame at or below the target. Fires once, immediately. |
+| **Depth: ding** | First frame at or below the target, provided the descent was watched from standing. Fires once, immediately. |
 | Rep counted | Back above 160° after a ding. Then it re-arms. |
 | Shallow | Went below 130°, never reached the target, returned above 160°. |
+
+**A ding needs an unbroken view of the descent.** The pose model will happily invent a skeleton when half of you is out of the picture, so the app refuses to measure unless the hip, knee and ankle are inside the frame (and the shoulder isn't cut off), the joints are visible, and the thigh and shin look like a leg seen from the side. A reading that appears out of nowhere is held back until the next frame agrees with it. And if tracking is interrupted before the ding, or the angle jumps further than a knee can move, the app disarms and waits to see you standing again. The price: if your knee is hidden for more than a moment on the way down, that rep gets no ding. The lock pill tells you why it isn't measuring (`STEP BACK · WHOLE BODY IN FRAME`, `LEG HIDDEN`, `TURN SIDE-ON`).
 
 A second ding in the same rep is impossible: after the ding nothing can fire until you stand back up past 160°. The 150/160 gap stops wobble at the top from starting phantom reps. A dip that stays above 130° is ignored.
 
@@ -159,14 +161,15 @@ To measure the true end-to-end delay, film yourself and the phone with a second 
 node tests/run-tests.mjs
 ```
 
-32 tests with synthetic angle sequences: full rep, shallow rep, jitter around the target and around the standing line, re-arming, starting in a squat, custom thresholds, anticipation (fires one frame early, never on the way up, counts misses, capped lead), single-frame tracking glitches, filter lag, and a noisy 8-rep set run end to end at 30 and 60 fps. Node 18 or newer, no packages to install.
+45 tests with synthetic angle sequences: full rep, shallow rep, jitter around the target and around the standing line, re-arming, starting in a squat, custom thresholds, anticipation (fires one frame early, never on the way up, counts misses, capped lead), single-frame tracking glitches, phantom reps from a half-visible body (stray readings after a dropout, joints outside the frame), filter lag, and a noisy 8-rep set run end to end at 30 and 60 fps. Node 18 or newer, no packages to install.
 
 ## Troubleshooting
 
 - **No sound.** Volume up, then Settings → Test ding. If it's still silent, flip the ring/silent switch to ring and check nothing is connected over Bluetooth.
 - **"The camera needs HTTPS".** You opened an `http://` address. Use the GitHub Pages address or `serve.py --https`.
 - **Camera permission denied.** In Safari tap the page menu in the address bar → Website Settings → Camera → Allow, then reload.
-- **LEG HIDDEN / NO BODY.** The hip, knee or ankle of your camera-side leg isn't clearly visible. Step back so your feet are in frame, or move the tripod so the Smith upright doesn't cover your knee.
+- **STEP BACK / LEG HIDDEN / NO BODY.** The hip, knee or ankle of your camera-side leg isn't inside the picture or isn't clearly visible. Step back so your feet and shoulders are in frame, or move the tripod so the Smith upright doesn't cover your knee. Nothing dings or counts while one of these is showing.
+- **Everything looks cramped in landscape.** Safari's address and tab bars take about a quarter of the screen when the phone is sideways. Use Share → Add to Home Screen and open it from the icon: no bars, full screen.
 - **Debug line shows 30 to 37 fps.** With nobody in frame that's normal: it speeds up to about 55 once it locks on to you. If the camera mode itself reads `@30`, the phone didn't offer a 60 fps mode at these sizes; it still works, each frame just costs 33 ms instead of 17.
 - **It dings on warm-up bends or racking the bar.** Anything that takes the knee past the target counts. Use Settings → Reset counts before the set.
 - **Screen dims anyway.** Low Power Mode blocks the wake lock. Turn it off or raise Auto-Lock.

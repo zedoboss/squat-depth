@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const coreSrc = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
 const C = new Function(`${coreSrc}\nreturn SquatCore;`)();
-const { RepMachine, AngleTracker, SidePicker, State, kneeAngle } = C;
+const { RepMachine, AngleTracker, SidePicker, State, kneeAngle, legProblem } = C;
 
 const FPS = 30;
 const DT = 1000 / FPS;
@@ -23,9 +23,10 @@ function ramp(from, to, degPerSec = 120, fps = FPS) {
   return out;
 }
 const hold = (angle, frames) => Array(frames).fill(angle);
+const STAND = 10; // frames of standing at the start: comfortably longer than ARM_HOLD_MS at 30 fps
 /** One squat: stand, go down to `bottom`, pause, come back up. */
 const squat = (bottom, speed = 120, top = 172) =>
-  [...hold(top, 5), ...ramp(top, bottom, speed), ...hold(bottom, 3), ...ramp(bottom, top, speed), ...hold(top, 5)];
+  [...hold(top, STAND), ...ramp(top, bottom, speed), ...hold(bottom, 3), ...ramp(bottom, top, speed), ...hold(top, 5)];
 
 /** Feed angles straight into a RepMachine with finite-difference velocity. Returns the events. */
 function feed(machine, angles, fps = FPS) {
@@ -87,7 +88,7 @@ test('full rep: one ding on the first frame at or below target, rep counted on s
 
 test('rep count does not increase until the stand-up', () => {
   const m = noAnticipation();
-  feed(m, [...hold(172, 5), ...ramp(172, 80), ...hold(80, 10)]);
+  feed(m, [...hold(172, STAND), ...ramp(172, 80), ...hold(80, 10)]);
   assert.equal(m.dings, 1);
   assert.equal(m.good, 0);
   assert.equal(m.state, State.DEPTH);
@@ -116,7 +117,7 @@ test('a small dip that stays above 130 is ignored', () => {
 test('jitter around the target: exactly one ding', () => {
   const m = noAnticipation();
   const wobble = Array.from({ length: 60 }, (_, i) => 90 + (i % 2 ? 2.5 : -2.5)); // 87.5 / 92.5 / 87.5 ...
-  const events = feed(m, [...hold(172, 5), ...ramp(172, 93), ...wobble, ...ramp(93, 172), ...hold(172, 5)]);
+  const events = feed(m, [...hold(172, STAND), ...ramp(172, 93), ...wobble, ...ramp(93, 172), ...hold(172, 5)]);
   assert.deepEqual(types(events), ['depth', 'rep']);
   assert.equal(m.dings, 1);
 });
@@ -124,20 +125,20 @@ test('jitter around the target: exactly one ding', () => {
 test('jitter around the standing threshold: no phantom reps', () => {
   const m = noAnticipation();
   const wobble = Array.from({ length: 200 }, (_, i) => 160 + 4 * Math.sin(i * 1.7)); // 156..164
-  assert.deepEqual(feed(m, [...hold(172, 5), ...wobble]), []);
+  assert.deepEqual(feed(m, [...hold(172, STAND), ...wobble]), []);
   assert.equal(m.good + m.shallow + m.dings, 0);
 });
 
 test('jitter around the descend threshold: no phantom reps', () => {
   const m = noAnticipation();
   const wobble = Array.from({ length: 200 }, (_, i) => 150 + 4 * Math.sin(i * 1.3)); // 146..154
-  assert.deepEqual(feed(m, [...hold(172, 5), ...wobble, ...hold(172, 5)]), []);
+  assert.deepEqual(feed(m, [...hold(172, STAND), ...wobble, ...hold(172, 5)]), []);
 });
 
 test('must re-arm: no second ding until back above the standing threshold', () => {
   const m = noAnticipation();
   // Down, half-way up to 150 (below the 160 re-arm line), down again.
-  let events = feed(m, [...hold(172, 5), ...ramp(172, 80), ...ramp(80, 150), ...ramp(150, 80)]);
+  let events = feed(m, [...hold(172, STAND), ...ramp(172, 80), ...ramp(80, 150), ...ramp(150, 80)]);
   assert.deepEqual(types(events), ['depth']);
   // Now a proper lock-out, then the next rep dings again.
   events = feed(m, [...ramp(80, 172), ...hold(172, 3), ...ramp(172, 80), ...ramp(80, 172)]);
@@ -184,7 +185,7 @@ test('resetState mid-rep disarms without touching the counts', () => {
 test('custom thresholds: target 110, standing 150', () => {
   const m = noAnticipation({ targetDeg: 110, standDeg: 150 });
   assert.equal(m.descendDeg, 140);
-  const angles = [...hold(155, 5), ...ramp(155, 105), ...ramp(105, 155), ...hold(155, 5)];
+  const angles = [...hold(155, STAND), ...ramp(155, 105), ...ramp(105, 155), ...hold(155, 5)];
   const events = feed(m, angles);
   assert.deepEqual(types(events), ['depth', 'rep']);
   assert.ok(events[0].at <= 110 && angles[events[0].frame - 1] > 110);
@@ -203,6 +204,45 @@ test('thresholds stay ordered at the slider extremes', () => {
   const junk = new RepMachine({ targetDeg: 'abc', standDeg: 999 });
   assert.equal(junk.targetDeg, 90);
   assert.equal(junk.standDeg, 175);
+});
+
+test('arming needs a sustained stand, not a single standing frame', () => {
+  const m = noAnticipation();
+  // Two standing frames (67 ms), then straight down: never armed, so no ding.
+  let events = feed(m, [...hold(172, 2), ...ramp(172, 80), ...hold(80, 5)]);
+  assert.deepEqual(events, []);
+  assert.equal(m.state, State.UNKNOWN);
+  // A wobble below the line restarts the hold.
+  events = feed(m, [...ramp(80, 172), ...hold(172, 4), 150, ...hold(172, 4), ...ramp(172, 80)]);
+  assert.deepEqual(events, []);
+});
+
+test('depth never fires on the frame a descent starts', () => {
+  const m = noAnticipation();
+  feed(m, hold(172, STAND));
+  assert.equal(m.update(60, -3000, m._t + DT, DT), null, 'standing to 60 degrees in one frame is not a squat');
+  assert.equal(m.state, State.DESCENDING);
+});
+
+test('an interruption before the ding disarms; after the ding it does not', () => {
+  const m = noAnticipation();
+  feed(m, [...hold(172, STAND), ...ramp(172, 120)]);
+  assert.equal(m.state, State.DESCENDING);
+  // Tracking restarts mid-descent and comes back already at depth: no ding, and no shallow buzz later.
+  assert.equal(m.update(80, 0, m._t + 600, DT, true), null);
+  assert.equal(m.state, State.UNKNOWN);
+  m._t += 600;
+  assert.deepEqual(feed(m, [...hold(80, 5), ...ramp(80, 172), ...hold(172, STAND)]), []);
+  // Fully watched rep, with a restart while he is at the bottom after the ding: the rep still counts.
+  let events = feed(m, [...ramp(172, 80)]);
+  assert.deepEqual(types(events), ['depth']);
+  assert.equal(m.update(80, 0, m._t + 600, DT, true), null);
+  assert.equal(m.state, State.DEPTH);
+  m._t += 600;
+  events = feed(m, ramp(80, 172));
+  assert.deepEqual(types(events), ['rep']);
+  assert.equal(m.good, 1);
+  assert.equal(m.shallow, 0);
 });
 
 // ---------- Anticipation ----------
@@ -225,7 +265,7 @@ test('anticipation: dings one frame before the crossing on a steady descent', ()
 test('anticipation: no early ding on a slow creep toward the target', () => {
   const m = new RepMachine({ anticipate: true });
   // 10 deg/s is below ANTICIPATE_MIN_VEL, so the ding must wait for the real crossing.
-  const angles = [...hold(172, 5), ...ramp(172, 100), ...ramp(100, 88, 10), ...ramp(88, 172)];
+  const angles = [...hold(172, STAND), ...ramp(172, 100), ...ramp(100, 88, 10), ...ramp(88, 172)];
   const events = feed(m, angles);
   assert.equal(events[0].type, 'depth');
   assert.equal(events[0].anticipated, false);
@@ -236,14 +276,14 @@ test('anticipation: no early ding on a slow creep toward the target', () => {
 test('anticipation: never fires on the way up', () => {
   const m = new RepMachine({ anticipate: true });
   // Bottoms out at 93 (above target), then rises: velocity is positive right next to the target.
-  const events = feed(m, [...hold(172, 5), ...ramp(172, 100), ...ramp(100, 93, 15), ...hold(93, 3), ...ramp(93, 172)]);
+  const events = feed(m, [...hold(172, STAND), ...ramp(172, 100), ...ramp(100, 93, 15), ...hold(93, 3), ...ramp(93, 172)]);
   assert.deepEqual(types(events), ['shallow']);
 });
 
 test('anticipation: an early ding that never reaches target is counted as missed', () => {
   const m = new RepMachine({ anticipate: true });
   // Fast descent that stops dead at 92: the prediction fires, the knee never gets to 90.
-  const events = feed(m, [...hold(172, 5), ...ramp(172, 92, 150), ...hold(92, 5), ...ramp(92, 172)]);
+  const events = feed(m, [...hold(172, STAND), ...ramp(172, 92, 150), ...hold(92, 5), ...ramp(92, 172)]);
   assert.deepEqual(types(events), ['depth', 'rep']);
   assert.equal(events[0].anticipated, true);
   assert.equal(events[1].confirmed, false);
@@ -255,9 +295,11 @@ test('anticipation: an early ding that never reaches target is counted as missed
 test('anticipation: lead is capped, a velocity spike cannot fire far above target', () => {
   const m = new RepMachine({ anticipate: true, extraLeadMs: 150 });
   m.update(172, 0, 0, DT);
-  m.update(140, -690, DT, DT);                       // descending, absurd velocity
-  assert.equal(m.update(90 + C.ANTICIPATE_MAX_DEG + 1, -690, 2 * DT, DT), null);
-  assert.equal(m.update(90 + C.ANTICIPATE_MAX_DEG - 1, -690, 3 * DT, DT).type, 'depth');
+  m.update(172, 0, C.ARM_HOLD_MS, DT);               // armed
+  const t = C.ARM_HOLD_MS;
+  m.update(140, -690, t + DT, DT);                   // descending, absurd velocity
+  assert.equal(m.update(90 + C.ANTICIPATE_MAX_DEG + 1, -690, t + 2 * DT, DT), null);
+  assert.equal(m.update(90 + C.ANTICIPATE_MAX_DEG - 1, -690, t + 3 * DT, DT).type, 'depth');
 });
 
 test('anticipation: extra lead fires earlier than one frame', () => {
@@ -311,29 +353,48 @@ test('tracker: a single-frame glitch is rejected and never reaches the state mac
   let events = 0, rejected = 0;
   angles.forEach((a, i) => {
     const s = t.update(a, i * DT);
-    if (!s) { rejected++; return; }
-    if (m.update(s.angle, s.vel, i * DT, s.dtMs)) events++;
+    if (!s) { if (i > 0) rejected++; return; } // frame 0 is always held back as a candidate
+    if (m.update(s.angle, s.vel, i * DT, s.dtMs, s.restarted)) events++;
   });
   assert.equal(rejected, 1);
   assert.equal(events, 0);
   assert.equal(m.state, State.STANDING);
 });
 
-test('tracker: a jump that persists is accepted after a couple of frames', () => {
+test('tracker: a jump that persists is accepted after a few frames, flagged as a restart', () => {
   const out = track(new AngleTracker(), [...hold(172, 10), ...hold(100, 10)]);
-  assert.equal(out[10], null);
-  assert.equal(out[11], null);
-  assert.ok(out[12] && Math.abs(out[12].angle - 100) < 1e-9);
+  assert.deepEqual(out.slice(10, 13), [null, null, null]); // two outliers, then a held-back candidate
+  assert.ok(out[13] && Math.abs(out[13].angle - 100) < 1e-9);
+  assert.equal(out[13].restarted, true);
+  assert.equal(out[14].restarted, false);
+});
+
+test('tracker: the first sample is held back until a second one agrees', () => {
+  const t = new AngleTracker();
+  assert.equal(t.update(172, 0), null);
+  const s = t.update(171, DT);
+  assert.ok(s && s.restarted === true);
+  assert.equal(t.update(170, 2 * DT).restarted, false);
+  // A lone reading followed by a wildly different one is never emitted.
+  const u = new AngleTracker();
+  assert.equal(u.update(41, 0), null);
+  assert.equal(u.update(172, DT), null);
+  assert.ok(u.update(172, 2 * DT));
 });
 
 test('tracker: restarts cleanly after a gap or a backwards timestamp', () => {
   const t = new AngleTracker();
   track(t, hold(172, 10));
-  const afterGap = t.update(100, 10 * DT + C.GAP_RESET_MS + 1);
+  const t0 = 10 * DT + C.GAP_RESET_MS + 1;
+  assert.equal(t.update(100, t0), null);              // candidate after the gap
+  const afterGap = t.update(100, t0 + DT);
   assert.equal(afterGap.angle, 100);
   assert.equal(afterGap.vel, 0);
-  const rewound = t.update(150, 5); // file replay: time goes backwards
+  assert.equal(afterGap.restarted, true);
+  assert.equal(t.update(150, 5), null);               // file replay: time goes backwards, start over
+  const rewound = t.update(150, 5 + DT);
   assert.equal(rewound.angle, 150);
+  assert.equal(rewound.restarted, true);
   assert.equal(t.update(NaN, 50), null);
 });
 
@@ -345,15 +406,16 @@ test('end to end: noisy 8-rep set at 30 and 60 fps, every ding lands within one 
       let seed = 42;
       const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
       const dt = 1000 / fps, period = 3; // seconds per rep
-      const truth = (tSec) => 126 + 46 * Math.cos(2 * Math.PI * tSec / period); // 172 at the top, 80 at the bottom
+      const lead = 0.5; // seconds of standing before the first rep, so the machine arms
+      const truth = (tSec) => tSec < lead ? 172 : 126 + 46 * Math.cos(2 * Math.PI * (tSec - lead) / period); // 172 at the top, 80 at the bottom
       const tracker = new AngleTracker(), m = new RepMachine({ anticipate });
       const dingTimes = [];
-      const frames = Math.round(8 * period * fps);
+      const frames = Math.round((lead + 8 * period) * fps);
       for (let i = 0; i <= frames; i++) {
         const tMs = i * dt;
         const s = tracker.update(truth(tMs / 1000) + 1.5 * rand(), tMs);
         if (!s) continue;
-        const ev = m.update(s.angle, s.vel, tMs, s.dtMs);
+        const ev = m.update(s.angle, s.vel, tMs, s.dtMs, s.restarted);
         if (ev?.type === 'depth') dingTimes.push(tMs);
       }
       assert.equal(dingTimes.length, 8, `${fps} fps anticipate=${anticipate}: dings`);
@@ -362,12 +424,103 @@ test('end to end: noisy 8-rep set at 30 and 60 fps, every ding lands within one 
       // True crossing of 90 deg in each rep: cos(x) = (90-126)/46
       const phase = Math.acos((90 - 126) / 46) / (2 * Math.PI) * period * 1000;
       dingTimes.forEach((tDing, rep) => {
-        const late = tDing - (rep * period * 1000 + phase);
+        const late = tDing - (lead * 1000 + rep * period * 1000 + phase);
         assert.ok(late < 2 * dt + 20, `${fps} fps anticipate=${anticipate} rep ${rep}: ding ${late.toFixed(0)} ms after crossing`);
         assert.ok(late > -3 * dt - 20, `${fps} fps anticipate=${anticipate} rep ${rep}: ding ${(-late).toFixed(0)} ms early`);
       });
     }
   }
+});
+
+// ---------- Regression: phantom rep when the body is half out of frame (seen on the phone) ----------
+
+/** Run raw angles (null = no usable pose that frame) through tracker + machine, like the app does. */
+function pipeline(rawAngles, { fps = 60, anticipate = true } = {}) {
+  const dt = 1000 / fps, tracker = new AngleTracker(), m = new RepMachine({ anticipate });
+  const events = [];
+  rawAngles.forEach((raw, i) => {
+    if (raw === null) return;
+    const s = tracker.update(raw, i * dt);
+    if (!s) return;
+    const ev = m.update(s.angle, s.vel, i * dt, s.dtMs, s.restarted);
+    if (ev) events.push(ev.type);
+  });
+  return { events, m };
+}
+
+test('phantom rep: a stray low reading after a tracking gap does not ding or count', () => {
+  // Standing lock, body lost for half a second, one garbage frame at 41 degrees, then standing again.
+  const { events, m } = pipeline([...hold(173, 30), ...Array(30).fill(null), 41, 172, 172, 172, ...hold(172, 60)]);
+  assert.deepEqual(events, []);
+  assert.equal(m.dings + m.good + m.shallow, 0);
+  assert.equal(m.state, State.STANDING, 're-armed once he is seen standing again');
+});
+
+test('phantom rep: garbage that persists for several frames after a gap still does not ding', () => {
+  const { events, m } = pipeline([...hold(173, 30), ...Array(30).fill(null), ...hold(41, 6), ...Array(30).fill(null), ...hold(172, 60)]);
+  assert.deepEqual(events, []);
+  assert.equal(m.dings + m.good + m.shallow, 0);
+});
+
+test('phantom rep: flickering lock with wild readings never produces an event', () => {
+  let seed = 3;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const raw = [...hold(173, 30)];
+  for (let i = 0; i < 600; i++) raw.push(rand() < 0.6 ? null : 15 + 165 * rand()); // 10 s of noise
+  const { m } = pipeline(raw);
+  assert.equal(m.dings, 0);
+  assert.equal(m.good, 0);
+});
+
+test('phantom rep: a big jump across a short dropout is not trusted as movement', () => {
+  // Descent under way, 250 ms of lost frames, then a reading 100 degrees lower that lingers, then standing.
+  const down = ramp(172, 140, 120, 60);
+  const { events, m } = pipeline([...hold(172, 30), ...down, ...Array(15).fill(null), ...hold(38, 8), ...hold(172, 60)]);
+  assert.deepEqual(events, []);
+  assert.equal(m.dings + m.good + m.shallow, 0);
+});
+
+test('short dropouts during a real descent do not cost the ding', () => {
+  // 60 fps rep with three frames (50 ms) missing every now and then.
+  const rep = squat(80, 120).flatMap((a, i, arr) => [a, i + 1 < arr.length ? (a + arr[i + 1]) / 2 : a]);
+  const holes = rep.map((a, i) => (i % 17 >= 14 ? null : a));
+  const { events, m } = pipeline(holes);
+  assert.deepEqual(events, ['depth', 'rep']);
+  assert.equal(m.good, 1);
+});
+
+test('a real rep right after a tracking gap still dings once he has been seen standing', () => {
+  const rep = squat(80, 120).flatMap((a, i, arr) => [a, i + 1 < arr.length ? (a + arr[i + 1]) / 2 : a]); // 30 -> 60 fps
+  const { events, m } = pipeline([...hold(173, 30), ...Array(40).fill(null), ...rep]);
+  assert.deepEqual(events, ['depth', 'rep']);
+  assert.equal(m.good, 1);
+});
+
+// ---------- Leg plausibility ----------
+
+function body({ shoulder = [0.5, 0.2], hip = [0.5, 0.45], knee = [0.5, 0.65], ankle = [0.5, 0.85], vis = 0.9 } = {}) {
+  const lm = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0 }));
+  const put = (i, [x, y]) => { lm[i] = { x, y, visibility: vis }; };
+  put(11, shoulder); put(C.LEG.L[0], hip); put(C.LEG.L[1], knee); put(C.LEG.L[2], ankle);
+  return lm;
+}
+
+test('legProblem: a whole, visible, side-on leg is fine', () => {
+  assert.equal(legProblem(body(), 'L', 960, 540), null);
+  assert.equal(legProblem(body({ hip: [0.35, 0.62], knee: [0.55, 0.65], ankle: [0.5, 0.88] }), 'L', 540, 960), null); // deep squat
+});
+
+test('legProblem: joints outside or at the edge of the frame are rejected', () => {
+  assert.equal(legProblem(body({ ankle: [0.5, 1.08] }), 'L', 960, 540), 'frame');   // feet below the picture
+  assert.equal(legProblem(body({ ankle: [0.5, 0.995] }), 'L', 960, 540), 'frame');  // pinned to the edge
+  assert.equal(legProblem(body({ hip: [0.5, -0.1], knee: [0.5, 0.01] }), 'L', 960, 540), 'frame'); // the phantom-rep frame
+  assert.equal(legProblem(body({ shoulder: [0.5, -0.3] }), 'L', 960, 540), 'frame'); // legs only: torso cut off
+});
+
+test('legProblem: occluded joints and impossible proportions are rejected', () => {
+  assert.equal(legProblem(body({ vis: 0.3 }), 'L', 960, 540), 'hidden');
+  assert.equal(legProblem(body({ hip: [0.5, 0.62], knee: [0.5, 0.65] }), 'L', 960, 540), 'shape'); // thigh a sliver of the shin
+  assert.equal(legProblem(body({ ankle: [0.5, 0.65] }), 'L', 960, 540), 'shape');                  // zero-length shin
 });
 
 // ---------- Side picker ----------
