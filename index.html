@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Squat Depth">
 <meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-180.png">
 <title>Squat Depth</title>
 <style>
   :root {
@@ -628,10 +630,11 @@ const nextMpTs = (t) => (mpTs = Math.max(Math.round(t), mpTs + 1));
 
 // ===== Audio: built once on the Start tap, then kept hot =====
 const audio = {
-  ctx: null, dingBuf: null, buzzBuf: null, readyBuf: null, nextDing: null,
+  ctx: null, dingBuf: null, buzzBuf: null, readyBuf: null, nextDing: null, idleTimer: 0,
 
   /** Must be called synchronously from a tap: iOS only unlocks audio inside a user gesture. */
   unlock() {
+    clearTimeout(this.idleTimer);
     if (!this.ctx) {
       // Play through the speaker even with the ring/silent switch on silent (Safari 16.4+).
       try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* not supported */ }
@@ -657,7 +660,7 @@ const audio = {
       const idle = ctx.createBufferSource();
       idle.buffer = this._render(1, () => (Math.random() - 0.5) * 2e-4);
       idle.loop = true; idle.connect(ctx.destination); idle.start();
-      ctx.onstatechange = () => { if (ctx.state !== 'running' && run.active) ctx.resume().catch(() => {}); };
+      ctx.onstatechange = () => { if (ctx.state !== 'running' && run.active && document.visibilityState === 'visible') ctx.resume().catch(() => {}); };
       this._arm();
     }
     if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
@@ -670,6 +673,7 @@ const audio = {
   },
   /** Pre-build the next ding so firing it is a single start() call. */
   _arm() {
+    if (!this.ctx) return; // shut down in the meantime
     const s = this.ctx.createBufferSource();
     s.buffer = this.dingBuf; s.connect(this.ctx.destination);
     this.nextDing = s;
@@ -687,6 +691,22 @@ const audio = {
     if (!this.ctx) return;
     const s = this.ctx.createBufferSource();
     s.buffer = buffer; s.connect(this.ctx.destination); s.start();
+  },
+  /**
+   * Let go of the phone's audio completely. While the context is open iOS lists this page as
+   * "playing" (Dynamic Island, lock screen, Control Center), so it must not outlive the session.
+   */
+  shutdown() {
+    clearTimeout(this.idleTimer);
+    const ctx = this.ctx;
+    this.ctx = null; this.nextDing = null;
+    if (ctx) { ctx.onstatechange = null; ctx.close().catch(() => {}); }
+    try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch { /* not supported */ }
+  },
+  /** For the test buttons on the start screen: play, then release the audio channel again. */
+  releaseSoonIfIdle() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => { if (!run.active) this.shutdown(); }, 1500);
   },
   /** Output latency the browser reports, in ms (0 if it doesn't say). */
   latencyMs() {
@@ -1131,6 +1151,7 @@ async function start(mode, fileUrl = null) {
 
 function stop() {
   run.active = false;
+  audio.shutdown();
   stopSource();
   releaseWakeLock();
   hideBanner();
@@ -1150,7 +1171,7 @@ const testUrl = new URLSearchParams(location.search).get('video'); // ?video=cli
 $('btnStart').addEventListener('click', () => start('camera'));
 $('btnTest').addEventListener('click', () => {
   audio.unlock(); // the file picker eats the gesture, so unlock audio now
-  if (testUrl) start('file', testUrl); else $('fileInput').click();
+  if (testUrl) start('file', testUrl); else { $('fileInput').click(); audio.idleTimer = setTimeout(() => { if (!run.active) audio.shutdown(); }, 60000); }
 });
 $('fileInput').addEventListener('change', (e) => {
   const file = e.target.files && e.target.files[0];
@@ -1195,9 +1216,9 @@ function onSettingChange() {
 for (const id of ['sTarget', 'sStand', 'sLead', 'sSound', 'sBuzz', 'sAnticipate', 'sPerf', 'sFull', 'sDebug']) {
   $(id).addEventListener('input', onSettingChange);
 }
-$('btnTestDing').addEventListener('click', () => { audio.unlock(); audio.ding(); });
-$('btnTestBuzz').addEventListener('click', () => { audio.unlock(); audio.buzz(); });
-$('btnTestReady').addEventListener('click', () => { audio.unlock(); audio.ready(); });
+$('btnTestDing').addEventListener('click', () => { audio.unlock(); audio.ding(); audio.releaseSoonIfIdle(); });
+$('btnTestBuzz').addEventListener('click', () => { audio.unlock(); audio.buzz(); audio.releaseSoonIfIdle(); });
+$('btnTestReady').addEventListener('click', () => { audio.unlock(); audio.ready(); audio.releaseSoonIfIdle(); });
 $('btnReset').addEventListener('click', () => { machine.resetCounts(); renderCounts(); });
 $('btnCopyLog').addEventListener('click', async () => {
   const text = JSON.stringify({
@@ -1224,7 +1245,8 @@ $('btnCopyLog').addEventListener('click', async () => {
 // Coming back from the lock screen / another app: iOS drops the wake lock, suspends audio,
 // and may end the camera track.
 document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState !== 'visible' || !run.active) return;
+  if (document.visibilityState === 'hidden') { audio.ctx?.suspend().catch(() => {}); return; }
+  if (!run.active) return;
   acquireWakeLock();
   audio.ctx?.resume().catch(() => {});
   machine.resetState(); tracker.reset();

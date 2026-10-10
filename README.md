@@ -168,6 +168,7 @@ node tests/run-tests.mjs
 
 ## Troubleshooting
 
+- **iOS shows the page as "playing" (Dynamic Island, lock screen).** That's expected while a session is running: the app holds the audio channel open so the ding has no start-up delay. It lets go the moment you tap ✕ (stop) or leave the page.
 - **No sound.** Volume up, then Settings → Test ding. If it's still silent, flip the ring/silent switch to ring and check nothing is connected over Bluetooth.
 - **"The camera needs HTTPS".** You opened an `http://` address. Use the GitHub Pages address or `serve.py --https`.
 - **Camera permission denied.** In Safari tap the page menu in the address bar → Website Settings → Camera → Allow, then reload.
