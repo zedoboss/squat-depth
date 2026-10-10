@@ -112,12 +112,12 @@ The ding can't be truly instant. Between your knee crossing the target and the s
 
 | Stage | Roughly | Notes |
 |---|---|---|
-| Camera | 30 to 70 ms | Exposure, sensor read-out, image processing, delivery to Safari. **Estimate.** Safari doesn't expose capture time to web pages, so the app can't measure this part. |
-| Waiting for a frame | half a frame on average | About 8 ms at 60 fps, 17 ms at 30 fps. The crossing happens between frames. |
-| Pose inference | 14 to 16 ms | **Measured** on an iPhone 17 Pro, lite model, GPU, in test mode. |
-| Audio out | 5 to 25 ms | Safari reported 3 ms of buffer on the same phone; the speaker hardware adds some it doesn't report. **Estimate.** |
+| Before the camera timestamp | 10 to 30 ms | Exposure and sensor read-out. **Estimate**: nothing in the browser can see this part. |
+| Waiting for a frame | half a frame on average | About 9 ms at the 55 fps the phone actually processes. The crossing happens between frames. |
+| Camera timestamp to ding scheduled | 23 to 28 ms | **Measured** live on an iPhone 17 Pro (the `cam→done` figure in the debug line). Includes 16 to 17 ms of pose inference, lite model on the GPU. |
+| Audio out | 5 to 25 ms | Safari reports 3 ms of buffer; the speaker hardware adds some it doesn't report. **Estimate.** |
 
-So expect something like **70 to 130 ms** from the real movement to the sound with the live camera, before anticipation. At a normal descent of about 100° per second, 100 ms is 10° of knee travel: the ding marks "you got there", and you'll be a little past the target when you hear it.
+So expect something like **50 to 90 ms** from the real movement to the sound, before anticipation. In the same live test anticipation fired on 5 of 6 reps and took back 26 to 29 ms each time, with no false dings. At a normal descent of about 100° per second, every 10 ms is 1° of knee travel, so you'll be a few degrees past the target when you hear it.
 
 What the app does about it:
 
@@ -138,14 +138,14 @@ Two ways to claw back more, both with a cost:
 
 ### Reading the debug line
 
-`58 fps · infer 14 ms · frame→done 30 ms · 960×540@60 · GPU lite · audio +3 ms · drop 2 · awake · early 3/7 (~44 ms)`
+`55 fps · infer 16 ms · cam→done 23 ms · 960×540@60 · GPU lite · audio +3 ms · drop 662 · awake · early 3/3 (~29 ms)`
 
 - **fps**: frames actually processed per second.
 - **infer**: time inside the pose model.
-- **frame→done**: from Safari presenting the frame to the app finishing with it. In browsers that report capture time (Chrome) this reads **cam→done** and includes the camera pipeline.
+- **cam→done**: from the camera's timestamp on the frame to the app finishing with it. With a video file, or in a browser that doesn't report capture time, it reads **frame→done** and starts when the frame is presented instead.
 - **camera mode**, **GPU or CPU**, **model**.
 - **audio**: output latency the browser admits to.
-- **drop**: frames skipped because the previous one was still being processed.
+- **drop**: frames skipped because the previous one was still being processed. It climbs quickly while nobody is in frame (searching for a body is slower than tracking one); that's harmless.
 - **awake**: the screen wake lock is held.
 - **early a/b (~N ms)**: a of b dings were fired by anticipation, on average N ms before the real crossing. "missed" counts early dings where the knee never reached the target.
 
@@ -167,7 +167,7 @@ node tests/run-tests.mjs
 - **"The camera needs HTTPS".** You opened an `http://` address. Use the GitHub Pages address or `serve.py --https`.
 - **Camera permission denied.** In Safari tap the page menu in the address bar → Website Settings → Camera → Allow, then reload.
 - **LEG HIDDEN / NO BODY.** The hip, knee or ankle of your camera-side leg isn't clearly visible. Step back so your feet are in frame, or move the tripod so the Smith upright doesn't cover your knee.
-- **Debug line shows 30 fps with the camera.** The phone didn't offer a 60 fps mode to Safari at these sizes. It still works; each frame just costs 33 ms instead of 17.
+- **Debug line shows 30 to 37 fps.** With nobody in frame that's normal: it speeds up to about 55 once it locks on to you. If the camera mode itself reads `@30`, the phone didn't offer a 60 fps mode at these sizes; it still works, each frame just costs 33 ms instead of 17.
 - **It dings on warm-up bends or racking the bar.** Anything that takes the knee past the target counts. Use Settings → Reset counts before the set.
 - **Screen dims anyway.** Low Power Mode blocks the wake lock. Turn it off or raise Auto-Lock.
 
