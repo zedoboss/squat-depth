@@ -1,0 +1,4 @@
+.cert/
+test-media/
+.claude/
+.DS_Store

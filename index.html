@@ -1,0 +1,1159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Squat Depth">
+<meta name="theme-color" content="#000000">
+<title>Squat Depth</title>
+<style>
+  :root {
+    --bg: #000; --fg: #fff; --dim: #a9b4be; --panel: #11161b; --line: #2b343d;
+    --good: #2dff8f; --bad: #ff5a4d; --warn: #ffd23f;
+    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+    --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 17px/1.4 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+    touch-action: manipulation; -webkit-text-size-adjust: 100%;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  /* ---------- Start screen ---------- */
+  #start {
+    max-width: 720px; margin: 0 auto;
+    padding: calc(20px + var(--sat)) calc(20px + var(--sar)) calc(120px + var(--sab)) calc(20px + var(--sal));
+  }
+  h1 { font-size: 34px; line-height: 1.1; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .tag { color: var(--dim); margin: 0 0 16px; }
+  h2.setup-title { font-size: 14px; letter-spacing: 0.08em; color: var(--dim); margin: 26px 0 8px; }
+  .setup { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+  .setup li {
+    counter-increment: s; position: relative; padding: 12px 0 12px 44px;
+    border-top: 1px solid var(--line); color: var(--dim);
+  }
+  .setup li::before {
+    content: counter(s); position: absolute; left: 0; top: 12px; width: 30px; height: 30px;
+    border-radius: 50%; background: var(--fg); color: #000; font-weight: 800;
+    display: grid; place-items: center;
+  }
+  .setup b { color: var(--fg); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .actions .primary { grid-column: 1 / -1; }
+  .btn {
+    min-height: 60px; border-radius: 14px; border: 2px solid var(--line); background: var(--panel);
+    font-size: 19px; font-weight: 700; padding: 0 18px;
+  }
+  .btn.primary { background: var(--good); border-color: var(--good); color: #000; font-size: 22px; min-height: 72px; }
+  .btn:active { transform: scale(0.98); }
+  .status { color: var(--dim); font-size: 14px; margin-top: 12px; min-height: 20px; }
+  .status.ok { color: var(--good); } .status.err { color: var(--bad); }
+  .notice {
+    border: 2px solid var(--warn); color: var(--warn); border-radius: 12px;
+    padding: 12px 14px; margin: 0 0 16px; font-weight: 600;
+  }
+
+  /* ---------- Run screen ---------- */
+  #run { position: fixed; inset: 0; background: #000; overflow: hidden; }
+  #video, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+  #run.hit #flash { opacity: 1; box-shadow: inset 0 0 0 3vmin var(--good); }
+  #run.shallow #flash { opacity: 1; box-shadow: inset 0 0 0 3vmin var(--bad); }
+  #run.perf #overlay, #run.perf .hud.angle { display: none; }
+
+  .hud {
+    position: absolute; top: calc(10px + var(--sat)); padding: 6px 14px 10px; border-radius: 16px;
+    background: rgba(0, 0, 0, 0.62); display: flex; flex-direction: column; line-height: 1;
+    font-variant-numeric: tabular-nums; pointer-events: none;
+  }
+  .hud.angle { left: calc(10px + var(--sal)); align-items: flex-start; }
+  .hud.reps { right: calc(10px + var(--sar)); align-items: flex-end; text-align: right; }
+  .hud .lbl { font-size: 3.4vmin; font-weight: 700; letter-spacing: 0.08em; color: var(--dim); margin: 4px 0; }
+  .hud .big { font-size: 22vmin; font-weight: 800; letter-spacing: -0.03em; }
+  .hud .huge { font-size: 34vmin; font-weight: 900; letter-spacing: -0.04em; color: var(--good); }
+  .hud .sub { font-size: 6vmin; font-weight: 700; margin-top: 1.2vmin; }
+  .hud .state { font-size: 5.5vmin; font-weight: 800; margin-top: 1vmin; color: var(--warn); }
+  .hud .state.depth { color: var(--good); }
+  #hudShallow.some { color: var(--bad); }
+
+  #banner {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background: var(--bad); color: #000; font-weight: 900; font-size: 11vmin; letter-spacing: -0.02em;
+    padding: 2vmin 5vmin; border-radius: 3vmin; white-space: nowrap; pointer-events: none;
+  }
+  #banner.info { background: rgba(0, 0, 0, 0.8); color: var(--fg); font-size: 6vmin; white-space: normal; text-align: center; max-width: 86vw; }
+
+  .bottom {
+    position: absolute; left: calc(10px + var(--sal)); right: calc(196px + var(--sar));
+    bottom: calc(10px + var(--sab)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    pointer-events: none;
+  }
+  .pill { font-size: 4.2vmin; font-weight: 800; padding: 1vmin 2.4vmin; border-radius: 99px; background: #000; border: 2px solid currentColor; }
+  .pill.good { color: var(--good); } .pill.bad { color: var(--bad); } .pill.warn { color: var(--warn); }
+  #rotate { display: none; }
+  @media (orientation: portrait) { #rotate { display: inline-block; } }
+  #debug {
+    flex-basis: 100%; font: 12px/1.35 ui-monospace, Menlo, monospace; color: #d6dee6;
+    background: rgba(0, 0, 0, 0.62); padding: 4px 8px; border-radius: 8px; width: fit-content; max-width: 100%;
+  }
+  .btns { position: absolute; right: calc(10px + var(--sar)); bottom: calc(10px + var(--sab)); display: flex; gap: 8px; }
+  .btns button {
+    width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--line);
+    background: rgba(0, 0, 0, 0.7); font-size: 24px; line-height: 1;
+  }
+
+  /* ---------- Settings sheet ---------- */
+  #settings { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.7); display: grid; place-items: end center; }
+  .sheet {
+    width: min(100%, 640px); max-height: 100dvh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 18px 18px 0 0;
+    padding: 16px calc(18px + var(--sar)) calc(96px + var(--sab)) calc(18px + var(--sal)); /* room for Safari's floating toolbar */
+  }
+  .sheet h2 { margin: 0 0 4px; font-size: 22px; display: flex; justify-content: space-between; align-items: center; }
+  .sheet h2 button { border: 0; background: var(--fg); color: #000; font-weight: 800; border-radius: 99px; padding: 8px 18px; font-size: 16px; }
+  .row { border-top: 1px solid var(--line); padding: 12px 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
+  .row .name { font-weight: 700; }
+  .row .val { font-weight: 800; font-variant-numeric: tabular-nums; color: var(--good); }
+  .row .help { grid-column: 1 / -1; color: var(--dim); font-size: 14px; }
+  .row input[type=range] { grid-column: 1 / -1; width: 100%; height: 36px; accent-color: var(--good); }
+  .row input[type=checkbox] { width: 28px; height: 28px; accent-color: var(--good); }
+  .sheet .tools { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .sheet .tools button { flex: 1 1 140px; min-height: 48px; border-radius: 12px; border: 2px solid var(--line); background: #000; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<main id="start">
+  <h1>Squat Depth</h1>
+  <p class="tag">A ding the instant your knee hits depth.</p>
+  <div id="startNotice" class="notice" hidden></div>
+  <div class="actions">
+    <button id="btnStart" class="btn primary">Start camera</button>
+    <button id="btnTest" class="btn">Test with video</button>
+    <button id="btnSettings" class="btn">Settings</button>
+  </div>
+  <input id="fileInput" type="file" accept="video/*" hidden>
+  <div id="modelStatus" class="status">Loading pose model&hellip;</div>
+
+  <h2 class="setup-title">SETUP</h2>
+  <ol class="setup">
+    <li><b>Phone at your side.</b> Tripod at about hip height, 2&ndash;3&nbsp;m away, landscape. Not behind you: knee angle can't be read from the back.</li>
+    <li><b>Stand sideways to the camera</b>, the same way you'll squat under the bar.</li>
+    <li><b>Whole body in frame</b>, head to feet, at the top and at the bottom of the squat.</li>
+    <li><b>Check the lock before you load up.</b> Wait for the green LOCK pill and the thick line on your camera-side leg, then do one unloaded rep and listen for the ding.</li>
+    <li><b>Phone speaker, volume up.</b> No Bluetooth: it delays the ding by 150&ndash;300&nbsp;ms.</li>
+  </ol>
+</main>
+
+<section id="run" hidden>
+  <video id="video" playsinline webkit-playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div id="flash"></div>
+
+  <div class="hud angle">
+    <span class="lbl">KNEE</span>
+    <span id="hudAngle" class="big">&ndash;</span>
+    <span id="hudState" class="state">&nbsp;</span>
+  </div>
+  <div class="hud reps">
+    <span class="lbl">GOOD REPS</span>
+    <span id="hudReps" class="huge">0</span>
+    <span id="hudShallow" class="sub">shallow 0</span>
+    <span id="hudLast" class="sub">last &ndash;</span>
+  </div>
+
+  <div id="banner" hidden></div>
+
+  <div class="bottom">
+    <span id="lock" class="pill bad">NO BODY</span>
+    <span id="rotate" class="pill warn">ROTATE TO LANDSCAPE</span>
+    <span id="audioWarn" class="pill warn" hidden></span>
+    <div id="debug" hidden></div>
+  </div>
+  <div class="btns">
+    <button id="btnReplay" aria-label="Replay video" hidden>&#x27F2;</button>
+    <button id="btnSettingsRun" aria-label="Settings">&#x2699;&#xFE0E;</button>
+    <button id="btnStop" aria-label="Stop">&#x2715;</button>
+  </div>
+</section>
+
+<div id="settings" hidden>
+  <div class="sheet">
+    <h2>Settings <button id="btnCloseSettings">Done</button></h2>
+    <label class="row"><span class="name">Target depth</span><span class="val" id="vTarget"></span>
+      <input id="sTarget" type="range" step="1">
+      <span class="help">Knee angle that earns the ding. Lower = deeper. 90&deg; is a right angle at the knee.</span></label>
+    <label class="row"><span class="name">Standing / re-arm</span><span class="val" id="vStand"></span>
+      <input id="sStand" type="range" step="1">
+      <span class="help">You must come back above this to finish the rep and arm the next ding. Lower it if you don't lock out fully.</span></label>
+    <label class="row"><span class="name">Sound</span><input id="sSound" type="checkbox"></label>
+    <label class="row"><span class="name">Buzz on shallow reps</span><input id="sBuzz" type="checkbox"></label>
+    <label class="row"><span class="name">Anticipation</span><input id="sAnticipate" type="checkbox">
+      <span class="help">Dings one frame early when you're clearly about to cross the target, to cancel some of the pipeline delay.</span></label>
+    <label class="row"><span class="name">Extra anticipation lead</span><span class="val" id="vLead"></span>
+      <input id="sLead" type="range" min="0" max="150" step="10">
+      <span class="help">Predict further ahead to cancel camera and speaker delay too. More lead = more dings on reps that stop just short. 0 is safest.</span></label>
+    <label class="row"><span class="name">Performance mode</span><input id="sPerf" type="checkbox">
+      <span class="help">No skeleton, no live angle. Every millisecond goes to the ding.</span></label>
+    <label class="row"><span class="name">Full model</span><input id="sFull" type="checkbox">
+      <span class="help">Steadier tracking in bad light or baggy clothes, but slower per frame. Lite is the low-latency default.</span></label>
+    <label class="row"><span class="name">Debug line</span><input id="sDebug" type="checkbox"></label>
+    <div class="tools">
+      <button id="btnTestDing">Test ding</button>
+      <button id="btnTestBuzz">Test buzz</button>
+      <button id="btnReset">Reset counts</button>
+      <button id="btnCopyLog">Copy latency log</button>
+    </div>
+  </div>
+</div>
+
+<!--
+  CORE: pure logic, no DOM. tests/run-tests.mjs extracts this block and runs it in Node,
+  so keep it free of browser APIs.
+-->
+<script id="core">
+const SquatCore = (() => {
+  'use strict';
+
+  // ===== Thresholds (degrees). The numbers that decide what counts as a rep. =====
+  const TARGET_DEG_DEFAULT = 90;    // knee angle that earns the ding
+  const TARGET_DEG_MIN = 60;
+  const TARGET_DEG_MAX = 130;
+  const STAND_DEG_DEFAULT = 160;    // above this = standing; also the re-arm threshold
+  const STAND_DEG_MIN = 150;
+  const STAND_DEG_MAX = 175;
+  const DESCEND_MARGIN_DEG = 10;    // DESCENDING starts at stand - 10 (150 by default)
+  const SHALLOW_DEG = 130;          // went below this without hitting target = shallow rep
+  const SHALLOW_MIN_GAP_DEG = 15;   // shallow zone is always at least this far above the target
+
+  // ===== Anticipation =====
+  const ANTICIPATE_MIN_VEL = 20;    // deg/s; must be falling at least this fast to fire early
+  const ANTICIPATE_MAX_DEG = 15;    // never fire more than this many degrees above the target
+  const ANTICIPATE_MAX_FRAME_MS = 50; // "one frame" is capped here so a stutter can't inflate the lead
+
+  // ===== Angle filter (One Euro: heavy smoothing when still, almost none when moving) =====
+  const FILTER_MIN_CUTOFF_HZ = 1.0;
+  const FILTER_BETA = 0.3;          // cutoff grows by this many Hz per deg/s of movement
+  const FILTER_D_CUTOFF_HZ = 1.0;
+  const MAX_DEG_PER_SEC = 700;      // faster than any real knee: treat as a tracking glitch
+  const MAX_OUTLIER_STREAK = 2;     // ...unless it persists, then believe it
+  const GAP_RESET_MS = 400;         // no samples for this long: restart the filter
+
+  // ===== Side selection =====
+  const SIDE_REEVAL_MS = 3000;      // re-pick left/right leg this often
+  const SIDE_SWITCH_MARGIN = 0.05;  // other leg must be this much more visible to switch
+  const SIDE_FIRST_EVAL_MS = 500;   // first re-check comes early, the first frame is a guess
+  const MIN_VISIBILITY = 0.5;       // hip/knee/ankle below this: don't trust the angle
+  const LEG = { L: [23, 25, 27], R: [24, 26, 28] }; // MediaPipe indices: hip, knee, ankle
+
+  const State = Object.freeze({
+    UNKNOWN: 'UNKNOWN',       // not armed yet: must be seen standing first
+    STANDING: 'STANDING',     // armed
+    DESCENDING: 'DESCENDING', // below stand - margin, target not reached yet
+    DEPTH: 'DEPTH',           // target reached, ding played, waiting for the stand-up
+  });
+
+  /**
+   * Interior angle at the knee, in degrees, from normalized image landmarks.
+   * Landmarks are 0..1 of width and height, so scale by the frame size first,
+   * otherwise a 16:9 frame squashes every angle.
+   */
+  function kneeAngle(hip, knee, ankle, width, height) {
+    const ax = (hip.x - knee.x) * width, ay = (hip.y - knee.y) * height;
+    const bx = (ankle.x - knee.x) * width, by = (ankle.y - knee.y) * height;
+    const mag = Math.hypot(ax, ay) * Math.hypot(bx, by);
+    if (mag === 0) return NaN;
+    const cos = Math.min(1, Math.max(-1, (ax * bx + ay * by) / mag));
+    return Math.acos(cos) * 180 / Math.PI;
+  }
+
+  class OneEuroFilter {
+    constructor(minCutoff = FILTER_MIN_CUTOFF_HZ, beta = FILTER_BETA, dCutoff = FILTER_D_CUTOFF_HZ) {
+      this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff;
+      this.reset();
+    }
+    reset() { this.x = null; this.raw = 0; this.dx = 0; }
+    static alpha(cutoffHz, dtSec) { return 1 / (1 + 1 / (2 * Math.PI * cutoffHz * dtSec)); }
+    filter(x, dtSec) {
+      if (this.x === null) { this.x = x; this.raw = x; this.dx = 0; return x; }
+      const rawDx = (x - this.raw) / dtSec;
+      this.raw = x;
+      this.dx += OneEuroFilter.alpha(this.dCutoff, dtSec) * (rawDx - this.dx);
+      const cutoff = this.minCutoff + this.beta * Math.abs(this.dx);
+      this.x += OneEuroFilter.alpha(cutoff, dtSec) * (x - this.x);
+      return this.x;
+    }
+  }
+
+  /**
+   * Raw per-frame angle in, { angle, vel, dtMs } out. Rejects single-frame glitches,
+   * applies the light filter, and estimates angular velocity from the last 2-3 frames.
+   */
+  class AngleTracker {
+    constructor() { this.filter = new OneEuroFilter(); this.sample = { angle: 0, vel: 0, dtMs: 0 }; this.reset(); }
+    reset() {
+      this.filter.reset();
+      this.lastT = null; this.lastRaw = 0; this.outliers = 0;
+      this.a1 = null; this.t1 = 0; this.a2 = null; this.t2 = 0; // previous two filtered samples
+      this.dtMs = 0;
+    }
+    /** @returns {{angle:number, vel:number, dtMs:number}|null} null when the frame was rejected */
+    update(raw, tMs) {
+      if (!Number.isFinite(raw)) return null;
+      if (this.lastT !== null) {
+        const gap = tMs - this.lastT;
+        if (gap <= 0 || gap > GAP_RESET_MS) this.reset();
+      }
+      if (this.lastT === null) {
+        this.lastT = tMs; this.lastRaw = raw;
+        this.a1 = this.filter.filter(raw, 0); this.t1 = tMs;
+        return this._out(this.a1, 0, 0);
+      }
+      const dt = tMs - this.lastT;
+      if (Math.abs(raw - this.lastRaw) / dt * 1000 > MAX_DEG_PER_SEC) {
+        if (++this.outliers <= MAX_OUTLIER_STREAK) return null;
+        // It persisted, so it's a real jump (e.g. the tracker re-locked). Start over from here.
+        this.reset();
+        return this.update(raw, tMs);
+      }
+      this.outliers = 0;
+      const angle = this.filter.filter(raw, dt / 1000);
+      // Velocity over the last one and two frame intervals; keep whichever is closer to zero,
+      // so a single noisy frame can't fake a fast descent.
+      const v1 = (angle - this.a1) / (tMs - this.t1) * 1000;
+      const v2 = this.a2 === null ? v1 : (angle - this.a2) / (tMs - this.t2) * 1000;
+      const vel = Math.sign(v1) !== Math.sign(v2) ? 0 : (Math.abs(v1) < Math.abs(v2) ? v1 : v2);
+      this.a2 = this.a1; this.t2 = this.t1; this.a1 = angle; this.t1 = tMs;
+      this.dtMs = this.dtMs ? this.dtMs + 0.2 * (dt - this.dtMs) : dt;
+      this.lastT = tMs; this.lastRaw = raw;
+      return this._out(angle, vel, this.dtMs);
+    }
+    _out(angle, vel, dtMs) { const s = this.sample; s.angle = angle; s.vel = vel; s.dtMs = dtMs; return s; }
+  }
+
+  /**
+   * The rep state machine. Feed it one filtered angle per frame.
+   * update() returns at most one event:
+   *   { type: 'depth', anticipated, angle }  -> play the ding NOW
+   *   { type: 'rep', minAngle }              -> good rep finished (back to standing)
+   *   { type: 'shallow', minAngle }          -> dipped past the shallow line, never hit target
+   *
+   * Double dings are impossible by construction: after 'depth' the machine sits in DEPTH and
+   * only re-arms once the angle is back above standDeg. The gap between descendDeg and
+   * standDeg is the hysteresis that stops jitter at the top from starting phantom reps.
+   */
+  class RepMachine {
+    constructor(cfg = {}) {
+      this.configure(cfg);
+      this.resetCounts();
+    }
+    configure(cfg = {}) {
+      const clamp = (v, lo, hi, d) => Number.isFinite(+v) ? Math.min(hi, Math.max(lo, +v)) : d;
+      this.targetDeg = clamp(cfg.targetDeg, TARGET_DEG_MIN, TARGET_DEG_MAX, TARGET_DEG_DEFAULT);
+      this.standDeg = clamp(cfg.standDeg, STAND_DEG_MIN, STAND_DEG_MAX, STAND_DEG_DEFAULT);
+      this.descendDeg = this.standDeg - DESCEND_MARGIN_DEG;
+      this.shallowDeg = Math.min(this.descendDeg, Math.max(SHALLOW_DEG, this.targetDeg + SHALLOW_MIN_GAP_DEG));
+      this.anticipate = cfg.anticipate !== false;
+      this.extraLeadMs = clamp(cfg.extraLeadMs, 0, 500, 0);
+    }
+    resetState() {
+      this.state = State.UNKNOWN;
+      this.minAngle = Infinity;
+      this._anticipated = false; this._confirmed = false; this._depthT = 0;
+    }
+    resetCounts() {
+      this.resetState();
+      this.good = 0; this.shallow = 0; this.lastMin = null;
+      this.dings = 0;               // total dings
+      this.early = 0;               // dings fired by anticipation, before angle <= target
+      this.earlyMissed = 0;         // ...where the knee then never actually reached target
+      this.earlyLeadSumMs = 0;      // for confirmed early dings: how far ahead of the real crossing
+      this.earlyConfirmed = 0;
+    }
+    /** True when no rep is in progress (safe moment to switch legs, etc). */
+    get idle() { return this.state === State.UNKNOWN || this.state === State.STANDING; }
+
+    update(angle, velDegPerSec = 0, tMs = 0, frameDtMs = 0) {
+      if (this.state === State.UNKNOWN) {
+        if (angle >= this.standDeg) this.state = State.STANDING;
+        return null;
+      }
+      if (this.state === State.STANDING) {
+        if (angle >= this.descendDeg) return null;
+        this.state = State.DESCENDING;
+        this.minAngle = angle;
+        // fall through: at low frame rates the same frame may already be at depth
+      }
+      if (angle < this.minAngle) this.minAngle = angle;
+
+      if (this.state === State.DESCENDING) {
+        if (angle >= this.standDeg) {
+          const min = this.minAngle;
+          this.state = State.STANDING; this.minAngle = Infinity;
+          if (min >= this.shallowDeg) return null;   // just a wiggle at the top
+          this.shallow++; this.lastMin = min;
+          return { type: 'shallow', minAngle: min };
+        }
+        if (angle <= this.targetDeg) return this._depth(false, angle, tMs);
+        if (this.anticipate && velDegPerSec <= -ANTICIPATE_MIN_VEL) {
+          const leadSec = (Math.min(frameDtMs, ANTICIPATE_MAX_FRAME_MS) + this.extraLeadMs) / 1000;
+          const leadDeg = Math.min(-velDegPerSec * leadSec, ANTICIPATE_MAX_DEG);
+          if (angle - leadDeg <= this.targetDeg) return this._depth(true, angle, tMs);
+        }
+        return null;
+      }
+
+      // State.DEPTH
+      if (this._anticipated && !this._confirmed && angle <= this.targetDeg) {
+        this._confirmed = true;
+        this.earlyConfirmed++;
+        this.earlyLeadSumMs += tMs - this._depthT;
+      }
+      if (angle >= this.standDeg) {
+        const ev = { type: 'rep', minAngle: this.minAngle, anticipated: this._anticipated, confirmed: !this._anticipated || this._confirmed };
+        if (this._anticipated && !this._confirmed) this.earlyMissed++;
+        this.good++; this.lastMin = this.minAngle;
+        this.state = State.STANDING; this.minAngle = Infinity;
+        return ev;
+      }
+      return null;
+    }
+    _depth(anticipated, angle, tMs) {
+      this.state = State.DEPTH;
+      this.dings++;
+      if (anticipated) this.early++;
+      this._anticipated = anticipated; this._confirmed = false; this._depthT = tMs;
+      return { type: 'depth', anticipated, angle };
+    }
+  }
+
+  /** Picks the leg (L/R) the camera sees best, re-evaluated every few seconds. */
+  class SidePicker {
+    constructor() { this.reset(); }
+    reset() { this.side = null; this.sumL = 0; this.sumR = 0; this.n = 0; this.nextEval = 0; }
+    static legVisibility(lm, side) {
+      const [h, k, a] = LEG[side];
+      return ((lm[h].visibility ?? 0) + (lm[k].visibility ?? 0) + (lm[a].visibility ?? 0)) / 3;
+    }
+    /** @param canSwitch pass false mid-rep so the angle never jumps legs during a squat */
+    update(lm, tMs, canSwitch = true) {
+      const vl = SidePicker.legVisibility(lm, 'L'), vr = SidePicker.legVisibility(lm, 'R');
+      if (this.side === null || tMs < this.nextEval - SIDE_REEVAL_MS) {
+        this.side = vl >= vr ? 'L' : 'R';
+        this.sumL = this.sumR = this.n = 0;
+        this.nextEval = tMs + SIDE_FIRST_EVAL_MS;
+        return this.side;
+      }
+      this.sumL += vl; this.sumR += vr; this.n++;
+      if (tMs >= this.nextEval && canSwitch) {
+        const avgL = this.sumL / this.n, avgR = this.sumR / this.n;
+        if (this.side === 'L' && avgR > avgL + SIDE_SWITCH_MARGIN) this.side = 'R';
+        else if (this.side === 'R' && avgL > avgR + SIDE_SWITCH_MARGIN) this.side = 'L';
+        this.sumL = this.sumR = this.n = 0;
+        this.nextEval = tMs + SIDE_REEVAL_MS;
+      }
+      return this.side;
+    }
+  }
+
+  return {
+    State, LEG, kneeAngle, OneEuroFilter, AngleTracker, RepMachine, SidePicker,
+    TARGET_DEG_DEFAULT, TARGET_DEG_MIN, TARGET_DEG_MAX,
+    STAND_DEG_DEFAULT, STAND_DEG_MIN, STAND_DEG_MAX,
+    DESCEND_MARGIN_DEG, SHALLOW_DEG, MIN_VISIBILITY, MAX_DEG_PER_SEC,
+    ANTICIPATE_MIN_VEL, ANTICIPATE_MAX_DEG, SIDE_REEVAL_MS, GAP_RESET_MS,
+  };
+})();
+</script>
+
+<script type="module">
+const C = SquatCore;
+const $ = (id) => document.getElementById(id);
+
+// ===== Pipeline constants =====
+const MP_VERSION = '1.1.0';
+const MP_LOCAL = './vendor/tasks-vision';   // vendored copy, same origin (preferred)
+const MP_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
+const MODEL_LOCAL = (m) => `./vendor/models/pose_landmarker_${m}.task`;
+const MODEL_CDN = (m) => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${m}/float16/latest/pose_landmarker_${m}.task`;
+
+const CAMERA_FPS = 60;
+const CAMERA_FPS_OK = 50;                   // below this, try other resolutions for a 60 fps mode
+const CAMERA_WIDTH = 960, CAMERA_HEIGHT = 540;
+const CAMERA_FALLBACKS = [[1280, 720], [640, 480]]; // never 1080p: more pixels, no accuracy gain
+
+const STALE_FRAME_MS = 120;                 // a live frame older than this is skipped, not processed
+const MAX_STALE_STREAK = 2;                 // ...but never skip more than this many in a row
+const LOST_RESET_MS = 3000;                 // body gone this long: disarm until seen standing again
+const DETECT_ERRORS_BEFORE_CPU = 5;         // consecutive GPU failures before rebuilding on CPU
+const WARMUP_RUNS = 3;
+const HUD_ANGLE_INTERVAL_MS = 100;
+const DEBUG_INTERVAL_MS = 500;
+const FLASH_MS = 280;
+const SHALLOW_BANNER_MS = 1500;
+const AUDIO_LATENCY_WARN_MS = 60;           // reported output latency above this smells like Bluetooth
+const BLUETOOTH_LABEL_RE = /bluetooth|airpods|buds|beats|headphone|headset|hands-?free/i;
+const LOG_MAX = 300;
+const SETTINGS_KEY = 'squat-depth-settings-v1';
+
+const DEFAULT_SETTINGS = {
+  targetDeg: C.TARGET_DEG_DEFAULT,
+  standDeg: C.STAND_DEG_DEFAULT,
+  sound: true,
+  buzz: true,
+  model: 'lite',
+  anticipate: true,
+  extraLeadMs: 0,
+  perfMode: false,
+  debug: true,
+};
+
+// ===== Settings =====
+function loadSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') || {}; } catch { /* private mode, bad JSON */ }
+  const s = { ...DEFAULT_SETTINGS };
+  for (const k of Object.keys(s)) if (typeof saved[k] === typeof s[k]) s[k] = saved[k];
+  if (s.model !== 'full') s.model = 'lite';
+  return s;
+}
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* storage unavailable */ }
+}
+const settings = loadSettings();
+
+// ===== State =====
+const video = $('video'), overlay = $('overlay'), runEl = $('run');
+const g = overlay.getContext('2d');
+const machine = new C.RepMachine(settings);
+const tracker = new C.AngleTracker();
+const sidePicker = new C.SidePicker();
+const stats = { fps: 0, inferMs: 0, frameToDoneMs: 0, dropped: 0, stale: 0, frames: 0, clock: '-', warmupMs: 0 };
+const latencyLog = [];
+const run = {
+  active: false, mode: null, stream: null, fileUrl: null, camera: '',
+  lastCb: 0, lastPresented: 0, lastMediaTime: -1, staleStreak: 0, detectErrors: 0,
+  lostSince: 0, lastHud: 0, lastDebug: 0, shownAngle: null, shownState: null, lockText: '',
+};
+let mpTs = 0; // MediaPipe wants strictly increasing timestamps
+const nextMpTs = (t) => (mpTs = Math.max(Math.round(t), mpTs + 1));
+
+// ===== Audio: built once on the Start tap, then kept hot =====
+const audio = {
+  ctx: null, dingBuf: null, buzzBuf: null, nextDing: null,
+
+  /** Must be called synchronously from a tap: iOS only unlocks audio inside a user gesture. */
+  unlock() {
+    if (!this.ctx) {
+      // Play through the speaker even with the ring/silent switch on silent (Safari 16.4+).
+      try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* not supported */ }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ctx = this.ctx = new AC({ latencyHint: 'interactive' });
+      this.dingBuf = this._render(0.32, (t) => {
+        // Hard attack (the onset is what you hear as "now"), bell-like decay.
+        const env = Math.exp(-t / 0.07);
+        return env * (0.6 * Math.sin(2 * Math.PI * 1175 * t) + 0.3 * Math.sin(2 * Math.PI * 2350 * t) + 0.1 * Math.sin(2 * Math.PI * 3525 * t));
+      });
+      this.buzzBuf = this._render(0.28, (t) => {
+        // Low sawtooth: phone speakers can't do real bass, the harmonics carry it.
+        const env = Math.min(1, t / 0.005) * Math.min(1, (0.28 - t) / 0.03);
+        return env * 0.5 * (2 * ((t * 175) % 1) - 1);
+      });
+      // A looping near-silent buffer keeps the audio hardware awake, so the ding
+      // never pays an output start-up delay.
+      const idle = ctx.createBufferSource();
+      idle.buffer = this._render(1, () => (Math.random() - 0.5) * 2e-4);
+      idle.loop = true; idle.connect(ctx.destination); idle.start();
+      ctx.onstatechange = () => { if (ctx.state !== 'running' && run.active) ctx.resume().catch(() => {}); };
+      this._arm();
+    }
+    if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+  },
+  _render(seconds, fn) {
+    const sr = this.ctx.sampleRate, buf = this.ctx.createBuffer(1, Math.round(seconds * sr), sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = fn(i / sr);
+    return buf;
+  },
+  /** Pre-build the next ding so firing it is a single start() call. */
+  _arm() {
+    const s = this.ctx.createBufferSource();
+    s.buffer = this.dingBuf; s.connect(this.ctx.destination);
+    this.nextDing = s;
+  },
+  ding() {
+    if (!this.ctx) return;
+    if (!this.nextDing) this._arm();
+    this.nextDing.start();
+    this.nextDing = null;
+    setTimeout(() => this._arm(), 0);
+  },
+  buzz() {
+    if (!this.ctx) return;
+    const s = this.ctx.createBufferSource();
+    s.buffer = this.buzzBuf; s.connect(this.ctx.destination); s.start();
+  },
+  /** Output latency the browser reports, in ms (0 if it doesn't say). */
+  latencyMs() {
+    if (!this.ctx) return 0;
+    return ((this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0)) * 1000;
+  },
+};
+
+/** Best effort: browsers don't expose the audio route, so look for hints. */
+async function checkAudioRoute() {
+  const reasons = [];
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const bt = devices.find((d) => d.kind === 'audiooutput' && BLUETOOTH_LABEL_RE.test(d.label));
+    if (bt) reasons.push(bt.label);
+  } catch { /* enumerateDevices unavailable */ }
+  const lat = audio.latencyMs();
+  if (lat > AUDIO_LATENCY_WARN_MS) reasons.push(`output latency ${Math.round(lat)} ms`);
+  const el = $('audioWarn');
+  el.hidden = reasons.length === 0;
+  if (reasons.length) el.textContent = 'BLUETOOTH? USE PHONE SPEAKER';
+  if (reasons.length) console.warn('[squat] audio output looks slow:', reasons.join(', '));
+}
+
+// ===== Pose model =====
+const pose = { vision: null, fileset: null, base: '', landmarker: null, delegate: '', model: '', ready: null, forceCpu: false };
+
+function setModelStatus(text, cls = '') {
+  const el = $('modelStatus');
+  el.textContent = text; el.className = 'status ' + cls;
+}
+
+async function loadVisionLib() {
+  if (pose.vision) return;
+  try {
+    pose.vision = await import(`${MP_LOCAL}/vision_bundle.mjs`);
+    pose.base = MP_LOCAL;
+  } catch {
+    pose.vision = await import(`${MP_CDN}/vision_bundle.mjs`);
+    pose.base = MP_CDN;
+  }
+  pose.fileset = await pose.vision.FilesetResolver.forVisionTasks(`${pose.base}/wasm`);
+}
+
+async function fetchModel(model) {
+  // One download, reused for the GPU attempt and the CPU fallback.
+  for (const url of [MODEL_LOCAL(model), MODEL_CDN(model)]) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return new Uint8Array(await res.arrayBuffer());
+    } catch { /* try the next source */ }
+  }
+  throw new Error(`Could not download the ${model} pose model`);
+}
+
+/** Run a few dummy frames so graph setup and shader compilation don't land on the first rep. */
+function warmUp(landmarker) {
+  const c = document.createElement('canvas');
+  c.width = 320; c.height = 240;
+  const x = c.getContext('2d');
+  x.fillStyle = '#444'; x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = '#bbb'; x.fillRect(140, 40, 40, 160);
+  const t0 = performance.now();
+  for (let i = 0; i < WARMUP_RUNS; i++) landmarker.detectForVideo(c, nextMpTs(performance.now()));
+  return performance.now() - t0;
+}
+
+async function buildLandmarker(model) {
+  setModelStatus(`Loading ${model} pose model…`);
+  await loadVisionLib();
+  const buffer = await fetchModel(model);
+  const delegates = pose.forceCpu ? ['CPU'] : ['GPU', 'CPU'];
+  let lastErr;
+  for (const delegate of delegates) {
+    let lm = null;
+    try {
+      lm = await pose.vision.PoseLandmarker.createFromOptions(pose.fileset, {
+        baseOptions: { modelAssetBuffer: buffer, delegate },
+        runningMode: 'VIDEO',
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.5,
+        minPosePresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+        outputSegmentationMasks: false,
+      });
+      stats.warmupMs = warmUp(lm);
+      const old = pose.landmarker;
+      pose.landmarker = lm; pose.delegate = delegate; pose.model = model;
+      try { old?.close(); } catch { /* already gone */ }
+      setModelStatus(`Pose model ready: ${model}, ${delegate}${pose.base === MP_LOCAL ? '' : ', from CDN'} (warm-up ${Math.round(stats.warmupMs)} ms)`, 'ok');
+      return;
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[squat] ${delegate} delegate failed`, e);
+      try { lm?.close(); } catch { /* ignore */ }
+    }
+  }
+  throw lastErr || new Error('Pose model failed to start');
+}
+
+function loadPose() {
+  pose.ready = buildLandmarker(settings.model).catch((e) => {
+    setModelStatus(`Pose model failed to load: ${e.message || e}. Check your connection and reload.`, 'err');
+    throw e;
+  });
+  pose.ready.catch(() => {});
+  return pose.ready;
+}
+
+// ===== Camera / video source =====
+async function startCamera() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    throw new Error('The camera needs HTTPS. Open the https:// address (see README).');
+  }
+  // Video only: asking for the mic would switch iOS into a call-style audio mode.
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: CAMERA_WIDTH }, height: { ideal: CAMERA_HEIGHT },
+      frameRate: { ideal: CAMERA_FPS },
+    },
+  });
+  const track = stream.getVideoTracks()[0];
+  // iPhones only offer 60 fps at some sizes. If we didn't get it, look for a mode that has it.
+  if ((track.getSettings().frameRate || 0) < CAMERA_FPS_OK) {
+    for (const [width, height] of [[CAMERA_WIDTH, CAMERA_HEIGHT], ...CAMERA_FALLBACKS]) {
+      try {
+        await track.applyConstraints({ width: { ideal: width }, height: { ideal: height }, frameRate: { min: CAMERA_FPS_OK, ideal: CAMERA_FPS } });
+        if ((track.getSettings().frameRate || 0) >= CAMERA_FPS_OK) break;
+      } catch { /* this size has no 60 fps mode */ }
+    }
+  }
+  const st = track.getSettings();
+  run.camera = `${st.width}×${st.height}@${Math.round(st.frameRate || 0)}`;
+  run.stream = stream;
+  video.srcObject = stream;
+  await video.play();
+}
+
+async function startFile(url) {
+  run.camera = 'file';
+  video.srcObject = null;
+  video.loop = false;
+  video.src = url;
+  await video.play();
+}
+
+function stopSource() {
+  run.stream?.getTracks().forEach((t) => t.stop());
+  run.stream = null;
+  video.pause();
+  video.srcObject = null;
+  video.removeAttribute('src');
+  video.load();
+  if (run.fileUrl) { URL.revokeObjectURL(run.fileUrl); run.fileUrl = null; }
+}
+
+// ===== Wake lock =====
+let wakeLock = null;
+async function acquireWakeLock() {
+  try {
+    if (!('wakeLock' in navigator) || wakeLock) return;
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch { /* low power mode, or not supported */ }
+}
+function releaseWakeLock() { try { wakeLock?.release(); } catch { /* ignore */ } wakeLock = null; }
+
+// ===== Frame loop =====
+const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+function requestFrame() {
+  if (hasRVFC) video.requestVideoFrameCallback(onVideoFrame);
+  else requestAnimationFrame(onAnimFrame);
+}
+// The next callback is requested before the work, and detection is synchronous, so frames
+// that arrive while we're busy are simply never delivered: nothing queues, nothing is stale.
+function onVideoFrame(now, meta) {
+  if (!run.active) return;
+  requestFrame();
+  processFrame(meta);
+}
+function onAnimFrame() {
+  if (!run.active) return;
+  requestFrame();
+  if (video.currentTime === run.lastMediaTime) return; // no new frame since last time
+  run.lastMediaTime = video.currentTime;
+  processFrame(null);
+}
+
+function processFrame(meta) {
+  const lm = pose.landmarker;
+  if (!lm || video.readyState < 2 || !video.videoWidth) return;
+  const tCb = performance.now();
+  const live = run.mode === 'camera';
+
+  // When did this frame happen? Best available clock: sensor capture > compositor present > now.
+  let tFrame = tCb, clock = 'callback';
+  if (meta) {
+    const cap = meta.captureTime, pres = meta.presentationTime;
+    if (live && cap > 0 && tCb - cap >= 0 && tCb - cap < 1000) { tFrame = cap; clock = 'capture'; }
+    else if (pres > 0 && tCb - pres >= 0 && tCb - pres < 1000) { tFrame = pres; clock = 'present'; }
+    if (run.lastPresented && meta.presentedFrames > run.lastPresented) stats.dropped += meta.presentedFrames - run.lastPresented - 1;
+    run.lastPresented = meta.presentedFrames;
+    if (live && tCb - meta.presentationTime > STALE_FRAME_MS && run.staleStreak < MAX_STALE_STREAK) {
+      run.staleStreak++; stats.stale++;
+      return;
+    }
+  }
+  run.staleStreak = 0;
+  stats.clock = clock;
+  // Time base for velocity: real time for the camera, media time for a file (survives seeks and stutter).
+  const tSample = live ? tFrame : (meta ? meta.mediaTime : video.currentTime) * 1000;
+
+  let result;
+  try {
+    result = lm.detectForVideo(video, nextMpTs(tCb));
+    run.detectErrors = 0;
+  } catch (e) {
+    if (++run.detectErrors >= DETECT_ERRORS_BEFORE_CPU && pose.delegate === 'GPU') {
+      console.warn('[squat] GPU inference keeps failing, switching to CPU', e);
+      run.detectErrors = 0; pose.forceCpu = true; pose.landmarker = null;
+      loadPose();
+    }
+    return;
+  }
+  const tDet = performance.now();
+
+  const points = result.landmarks && result.landmarks[0];
+  let sample = null, side = null, lockText = 'NO BODY', lockCls = 'bad';
+  if (points) {
+    const prevSide = sidePicker.side;
+    side = sidePicker.update(points, tSample, machine.idle);
+    if (prevSide && side !== prevSide) tracker.reset();
+    const [h, k, a] = C.LEG[side];
+    const vis = Math.min(points[h].visibility ?? 0, points[k].visibility ?? 0, points[a].visibility ?? 0);
+    if (vis >= C.MIN_VISIBILITY) {
+      const raw = C.kneeAngle(points[h], points[k], points[a], video.videoWidth, video.videoHeight);
+      sample = tracker.update(raw, tSample);
+      lockText = `LOCK · ${side === 'L' ? 'LEFT' : 'RIGHT'} LEG`; lockCls = 'good';
+    } else {
+      lockText = 'LEG HIDDEN'; lockCls = 'warn';
+    }
+  }
+
+  if (sample) {
+    run.lostSince = 0;
+    const ev = machine.update(sample.angle, sample.vel, tSample, sample.dtMs);
+    if (ev) onRepEvent(ev, sample, tFrame, tCb, tDet, clock);
+  } else if (!run.lostSince) {
+    run.lostSince = tDet;
+  } else if (tDet - run.lostSince > LOST_RESET_MS && machine.state !== C.State.UNKNOWN) {
+    machine.resetState(); tracker.reset();
+  }
+
+  // ----- Everything below is display only; the ding has already been fired. -----
+  const tDone = performance.now();
+  stats.frames++;
+  if (run.lastCb) stats.fps += 0.1 * (1000 / (tCb - run.lastCb) - stats.fps);
+  run.lastCb = tCb;
+  stats.inferMs += 0.1 * (tDet - tCb - stats.inferMs);
+  stats.frameToDoneMs += 0.1 * (tDone - tFrame - stats.frameToDoneMs);
+
+  if (lockText !== run.lockText) {
+    run.lockText = lockText;
+    const el = $('lock'); el.textContent = lockText; el.className = 'pill ' + lockCls;
+  }
+  if (!settings.perfMode) {
+    drawOverlay(points, side);
+    if (tDone - run.lastHud >= HUD_ANGLE_INTERVAL_MS) {
+      run.lastHud = tDone;
+      const shown = sample ? Math.round(sample.angle) : null;
+      if (shown !== run.shownAngle) { run.shownAngle = shown; $('hudAngle').textContent = shown === null ? '–' : shown + '°'; }
+      if (machine.state !== run.shownState) {
+        run.shownState = machine.state;
+        const el = $('hudState');
+        el.textContent = STATE_LABEL[machine.state];
+        el.className = 'state' + (machine.state === C.State.DEPTH ? ' depth' : '');
+      }
+    }
+  }
+  if (settings.debug && tDone - run.lastDebug >= DEBUG_INTERVAL_MS) {
+    run.lastDebug = tDone;
+    renderDebug();
+  }
+}
+
+const STATE_LABEL = {
+  [C.State.UNKNOWN]: 'STAND TALL TO ARM',
+  [C.State.STANDING]: 'READY',
+  [C.State.DESCENDING]: 'GOING DOWN',
+  [C.State.DEPTH]: 'DEPTH ✓ STAND UP',
+};
+
+function onRepEvent(ev, sample, tFrame, tCb, tDet, clock) {
+  if (ev.type === 'depth') {
+    if (settings.sound) audio.ding();
+    const tDing = performance.now();
+    flash('hit');
+    const entry = {
+      ding: machine.dings, anticipated: ev.anticipated,
+      angle: +sample.angle.toFixed(1), velDegPerSec: +sample.vel.toFixed(0),
+      frameClock: clock,                       // what tFrame means: capture | present | callback
+      tFrame: +tFrame.toFixed(1), tCallback: +tCb.toFixed(1), tDetectDone: +tDet.toFixed(1), tDingScheduled: +tDing.toFixed(1),
+      frameToDingMs: +(tDing - tFrame).toFixed(1), inferMs: +(tDet - tCb).toFixed(1),
+      audioOutputMs: +audio.latencyMs().toFixed(1), audioCtxTime: audio.ctx ? +audio.ctx.currentTime.toFixed(4) : null,
+      sound: settings.sound,
+    };
+    latencyLog.push(entry);
+    if (latencyLog.length > LOG_MAX) latencyLog.shift();
+    console.log('[squat] ding', JSON.stringify(entry));
+  } else if (ev.type === 'rep') {
+    renderCounts();
+    if (ev.anticipated && !ev.confirmed) console.log(`[squat] early ding was not confirmed: min ${ev.minAngle.toFixed(1)}° vs target ${machine.targetDeg}°`);
+  } else if (ev.type === 'shallow') {
+    if (settings.sound && settings.buzz) audio.buzz();
+    flash('shallow');
+    showBanner('TOO SHALLOW', SHALLOW_BANNER_MS);
+    renderCounts();
+    console.log(`[squat] shallow rep: min ${ev.minAngle.toFixed(1)}°`);
+  }
+}
+
+// ===== Display =====
+const BONES = [[11, 12], [11, 23], [12, 24], [23, 24], [11, 13], [13, 15], [12, 14], [14, 16],
+  [23, 25], [25, 27], [24, 26], [26, 28], [27, 31], [28, 32]];
+
+function drawOverlay(points, side) {
+  const w = video.videoWidth, h = video.videoHeight;
+  if (overlay.width !== w || overlay.height !== h) { overlay.width = w; overlay.height = h; } // also handles rotation
+  g.clearRect(0, 0, w, h);
+  if (!points) return;
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.lineWidth = Math.max(2, w / 320);
+  g.strokeStyle = 'rgba(255,255,255,0.6)';
+  g.beginPath();
+  for (const [a, b] of BONES) {
+    const p = points[a], q = points[b];
+    if ((p.visibility ?? 0) < 0.3 || (q.visibility ?? 0) < 0.3) continue;
+    g.moveTo(p.x * w, p.y * h); g.lineTo(q.x * w, q.y * h);
+  }
+  g.stroke();
+  if (!side) return;
+  const [hi, ki, ai] = C.LEG[side];
+  const hip = points[hi], knee = points[ki], ankle = points[ai];
+  g.lineWidth = Math.max(5, w / 110);
+  g.strokeStyle = machine.state === C.State.DEPTH ? '#2dff8f' : '#ffd23f';
+  g.beginPath();
+  g.moveTo(hip.x * w, hip.y * h); g.lineTo(knee.x * w, knee.y * h); g.lineTo(ankle.x * w, ankle.y * h);
+  g.stroke();
+  g.fillStyle = '#fff';
+  g.beginPath(); g.arc(knee.x * w, knee.y * h, Math.max(5, w / 110), 0, Math.PI * 2); g.fill();
+}
+
+function renderCounts() {
+  $('hudReps').textContent = machine.good;
+  const sh = $('hudShallow');
+  sh.textContent = `shallow ${machine.shallow}`;
+  sh.className = 'sub' + (machine.shallow ? ' some' : '');
+  $('hudLast').textContent = machine.lastMin === null ? 'last –' : `last ${Math.round(machine.lastMin)}°`;
+}
+
+function renderDebug() {
+  const frameLabel = stats.clock === 'capture' ? 'cam→done' : stats.clock === 'present' ? 'frame→done' : 'cb→done';
+  const early = machine.early
+    ? ` · early ${machine.early}/${machine.dings}` +
+      (machine.earlyConfirmed ? ` (~${Math.round(machine.earlyLeadSumMs / machine.earlyConfirmed)} ms)` : '') +
+      (machine.earlyMissed ? ` ${machine.earlyMissed} missed` : '')
+    : '';
+  $('debug').textContent =
+    `${stats.fps.toFixed(0)} fps · infer ${stats.inferMs.toFixed(0)} ms · ${frameLabel} ${stats.frameToDoneMs.toFixed(0)} ms` +
+    ` · ${run.camera} · ${pose.delegate} ${pose.model}` +
+    ` · audio +${audio.latencyMs().toFixed(0)} ms · drop ${stats.dropped}${stats.stale ? ' stale ' + stats.stale : ''}` +
+    `${wakeLock ? ' · awake' : ''}${early}`;
+}
+
+let flashTimer = 0, bannerTimer = 0;
+function flash(cls) {
+  runEl.classList.remove('hit', 'shallow');
+  runEl.classList.add(cls);
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => runEl.classList.remove(cls), FLASH_MS);
+}
+function showBanner(text, ms = 0, info = false) {
+  const el = $('banner');
+  el.textContent = text; el.className = info ? 'info' : ''; el.hidden = false;
+  clearTimeout(bannerTimer);
+  if (ms) bannerTimer = setTimeout(() => { el.hidden = true; }, ms);
+}
+function hideBanner() { clearTimeout(bannerTimer); $('banner').hidden = true; }
+
+function applyDisplaySettings() {
+  runEl.classList.toggle('perf', settings.perfMode);
+  $('debug').hidden = !settings.debug;
+  if (settings.perfMode) { g.clearRect(0, 0, overlay.width, overlay.height); run.shownAngle = null; run.shownState = null; }
+}
+
+// ===== Start / stop =====
+function resetSession() {
+  machine.resetCounts(); tracker.reset(); sidePicker.reset();
+  Object.assign(stats, { fps: 0, inferMs: 0, frameToDoneMs: 0, dropped: 0, stale: 0, frames: 0 });
+  Object.assign(run, { lastCb: 0, lastPresented: 0, lastMediaTime: -1, staleStreak: 0, detectErrors: 0, lostSince: 0, shownAngle: null, shownState: null });
+  $('hudAngle').textContent = '–'; $('hudState').textContent = ' ';
+  renderCounts();
+}
+
+async function start(mode, fileUrl = null) {
+  audio.unlock(); // first thing, still inside the tap
+  run.mode = mode; run.fileUrl = fileUrl && fileUrl.startsWith('blob:') ? fileUrl : null;
+  $('start').hidden = true; runEl.hidden = false;
+  $('btnReplay').hidden = mode !== 'file';
+  $('startNotice').hidden = true;
+  resetSession(); applyDisplaySettings();
+  showBanner(mode === 'camera' ? 'Starting camera…' : 'Loading video…', 0, true);
+  try {
+    if (mode === 'camera') await startCamera(); else await startFile(fileUrl);
+    if (!pose.landmarker) { showBanner('Loading pose model…', 0, true); await (pose.ready || loadPose()); }
+    hideBanner();
+    run.active = true;
+    requestFrame();
+    acquireWakeLock();
+    checkAudioRoute();
+  } catch (e) {
+    console.error('[squat] start failed', e);
+    stop();
+    const el = $('startNotice');
+    el.textContent = e.name === 'NotAllowedError'
+      ? 'Camera permission was denied. Allow the camera for this site (Safari: aA menu → Website Settings → Camera) and try again.'
+      : `Could not start: ${e.message || e}`;
+    el.hidden = false;
+  }
+}
+
+function stop() {
+  run.active = false;
+  stopSource();
+  releaseWakeLock();
+  hideBanner();
+  runEl.hidden = true; $('start').hidden = false;
+}
+
+function replay() {
+  resetSession();
+  hideBanner();
+  video.currentTime = 0;
+  video.play().catch(() => {});
+}
+
+// ===== Wiring =====
+const testUrl = new URLSearchParams(location.search).get('video'); // ?video=clip.mp4 skips the file picker
+
+$('btnStart').addEventListener('click', () => start('camera'));
+$('btnTest').addEventListener('click', () => {
+  audio.unlock(); // the file picker eats the gesture, so unlock audio now
+  if (testUrl) start('file', testUrl); else $('fileInput').click();
+});
+$('fileInput').addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (file) start('file', URL.createObjectURL(file));
+});
+$('btnStop').addEventListener('click', stop);
+$('btnReplay').addEventListener('click', replay);
+video.addEventListener('ended', () => {
+  if (run.active && run.mode === 'file') showBanner(`Video ended: ${machine.good} good, ${machine.shallow} shallow. Tap ⟲ to replay.`, 0, true);
+});
+
+function openSettings() { syncSettingsUi(); $('settings').hidden = false; }
+$('btnSettings').addEventListener('click', openSettings);
+$('btnSettingsRun').addEventListener('click', openSettings);
+$('btnCloseSettings').addEventListener('click', () => { $('settings').hidden = true; });
+$('settings').addEventListener('click', (e) => { if (e.target === $('settings')) $('settings').hidden = true; });
+
+function syncSettingsUi() {
+  $('sTarget').min = C.TARGET_DEG_MIN; $('sTarget').max = C.TARGET_DEG_MAX; $('sTarget').value = settings.targetDeg;
+  $('sStand').min = C.STAND_DEG_MIN; $('sStand').max = C.STAND_DEG_MAX; $('sStand').value = settings.standDeg;
+  $('sLead').value = settings.extraLeadMs;
+  $('vTarget').textContent = settings.targetDeg + '°';
+  $('vStand').textContent = settings.standDeg + '°';
+  $('vLead').textContent = settings.extraLeadMs ? `1 frame + ${settings.extraLeadMs} ms` : '1 frame';
+  $('sSound').checked = settings.sound; $('sBuzz').checked = settings.buzz;
+  $('sAnticipate').checked = settings.anticipate; $('sPerf').checked = settings.perfMode;
+  $('sFull').checked = settings.model === 'full'; $('sDebug').checked = settings.debug;
+}
+function onSettingChange() {
+  const prevModel = settings.model;
+  settings.targetDeg = +$('sTarget').value;
+  settings.standDeg = +$('sStand').value;
+  settings.extraLeadMs = +$('sLead').value;
+  settings.sound = $('sSound').checked; settings.buzz = $('sBuzz').checked;
+  settings.anticipate = $('sAnticipate').checked; settings.perfMode = $('sPerf').checked;
+  settings.model = $('sFull').checked ? 'full' : 'lite'; settings.debug = $('sDebug').checked;
+  machine.configure(settings);
+  saveSettings(); syncSettingsUi(); applyDisplaySettings();
+  if (settings.model !== prevModel) loadPose(); // the old model keeps running until the new one is warm
+}
+for (const id of ['sTarget', 'sStand', 'sLead', 'sSound', 'sBuzz', 'sAnticipate', 'sPerf', 'sFull', 'sDebug']) {
+  $(id).addEventListener('input', onSettingChange);
+}
+$('btnTestDing').addEventListener('click', () => { audio.unlock(); audio.ding(); });
+$('btnTestBuzz').addEventListener('click', () => { audio.unlock(); audio.buzz(); });
+$('btnReset').addEventListener('click', () => { machine.resetCounts(); renderCounts(); });
+$('btnCopyLog').addEventListener('click', async () => {
+  const text = JSON.stringify({
+    when: new Date().toISOString(), userAgent: navigator.userAgent, settings, camera: run.camera,
+    delegate: pose.delegate, model: pose.model, warmupMs: Math.round(stats.warmupMs),
+    fps: +stats.fps.toFixed(1), inferMs: +stats.inferMs.toFixed(1), droppedFrames: stats.dropped, staleFrames: stats.stale,
+    dings: machine.dings, earlyDings: machine.early, earlyMissed: machine.earlyMissed,
+    earlyAvgLeadMs: machine.earlyConfirmed ? +(machine.earlyLeadSumMs / machine.earlyConfirmed).toFixed(1) : null,
+    log: latencyLog,
+  }, null, 1);
+  const btn = $('btnCopyLog');
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = `Copied ${latencyLog.length} dings`;
+  } catch {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    a.download = 'squat-latency-log.json'; a.click();
+    btn.textContent = 'Saved as file';
+  }
+  setTimeout(() => { btn.textContent = 'Copy latency log'; }, 2000);
+});
+
+// Coming back from the lock screen / another app: iOS drops the wake lock, suspends audio,
+// and may end the camera track.
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !run.active) return;
+  acquireWakeLock();
+  audio.ctx?.resume().catch(() => {});
+  machine.resetState(); tracker.reset();
+  if (run.mode === 'camera') {
+    const track = run.stream?.getVideoTracks()[0];
+    if (!track || track.readyState === 'ended') {
+      try { run.stream?.getTracks().forEach((t) => t.stop()); await startCamera(); } catch (e) { console.warn('[squat] camera restart failed', e); stop(); }
+    } else {
+      video.play().catch(() => {});
+    }
+  }
+});
+navigator.mediaDevices?.addEventListener?.('devicechange', () => { if (run.active) checkAudioRoute(); });
+
+if (!window.isSecureContext) {
+  const el = $('startNotice');
+  el.textContent = 'This page is not on HTTPS, so the camera is blocked. Video-file test mode still works. See the README for HTTPS options.';
+  el.hidden = false;
+}
+if (testUrl) $('btnTest').textContent = 'Test: ' + testUrl.split('/').pop();
+
+syncSettingsUi();
+loadPose();
+
+// For poking at from the console.
+window.squat = { settings, machine, tracker, stats, latencyLog, pose, run, audio };
+</script>
+</body>
+</html>
