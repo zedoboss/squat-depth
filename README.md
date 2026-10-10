@@ -9,7 +9,15 @@ Everything runs in Safari on the phone. No server, no account, no build step, no
 - `tests/run-tests.mjs` unit-tests the rep logic.
 - `serve.py` is a tiny local server for testing.
 
-## Put it on your iPhone (GitHub Pages, free)
+## Live copy
+
+This copy is already deployed: **https://zedoboss.github.io/squat-depth/**
+
+The code is at https://github.com/zedoboss/squat-depth. GitHub Pages serves the **`gh-pages`** branch. To update the live app: make the change in this folder, then in GitHub Desktop (with `gh-pages` as the current branch) commit and click **Push origin**. The site refreshes in about a minute.
+
+On the iPhone, open the address in Safari, then **Share → Add to Home Screen** for a full-screen app icon.
+
+## Deploying your own copy from scratch (GitHub Pages, free)
 
 The iPhone camera only works on HTTPS pages. GitHub Pages gives you HTTPS for free.
 
