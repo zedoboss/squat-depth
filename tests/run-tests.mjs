@@ -39,7 +39,7 @@ function feed(machine, angles, fps = FPS) {
     prev = angle;
     machine._t += dt;
     const ev = machine.update(angle, vel, machine._t, dt);
-    if (ev) events.push({ ...ev, frame: i, at: angle });
+    if (ev && (ev.type !== 'armed' || machine._keepArmed)) events.push({ ...ev, frame: i, at: angle });
   });
   return events;
 }
@@ -167,8 +167,8 @@ test('mixed set: good, shallow, good', () => {
 
 test('not armed until seen standing: a brief crouch or a pass through depth does not ding', () => {
   const m = noAnticipation();
-  // Comes into view already low, stays there 300 ms (under DEPTH_HOLD_MS), stands up.
-  let events = feed(m, [...hold(80, 9), ...ramp(80, 172), ...hold(172, STAND)]);
+  // Comes into view already low, stays there 200 ms (under DEPTH_HOLD_MS), stands up.
+  let events = feed(m, [...hold(80, 6), ...ramp(80, 172), ...hold(172, STAND)]);
   assert.deepEqual(events, []);
   assert.equal(m.state, State.STANDING);
   events = feed(m, squat(80).slice(STAND));
@@ -193,10 +193,10 @@ test('held at depth without a watched descent: one late ding, and the rep counts
 
 test('late ding needs an unbroken hold: an interruption restarts the clock', () => {
   const m = noAnticipation();
-  feed(m, hold(80, 9));                                   // 300 ms at depth
+  feed(m, hold(80, 7));                                   // 233 ms at depth
   assert.equal(m.update(80, 0, m._t + DT, DT, true), null); // tracking restarted
   m._t += DT;
-  assert.deepEqual(feed(m, hold(80, 9)), []);             // another 300 ms: still not enough since the restart
+  assert.deepEqual(feed(m, hold(80, 7)), []);             // another 233 ms: still not enough since the restart
   assert.deepEqual(types(feed(m, hold(80, 6))), ['depth']);
 });
 
@@ -237,12 +237,26 @@ test('thresholds stay ordered at the slider extremes', () => {
 test('arming needs a sustained stand, not a single standing frame', () => {
   const m = noAnticipation();
   // Two standing frames (67 ms), then straight down: never armed, so no ding.
-  let events = feed(m, [...hold(172, 2), ...ramp(172, 80), ...hold(80, 5)]);
+  let events = feed(m, [...hold(172, 2), ...ramp(172, 80), ...hold(80, 3)]); // too brief at depth for the late ding
   assert.deepEqual(events, []);
   assert.equal(m.state, State.UNKNOWN);
   // A wobble below the line restarts the hold.
   events = feed(m, [...ramp(80, 172), ...hold(172, 4), 150, ...hold(172, 4), ...ramp(172, 80)]);
   assert.deepEqual(events, []);
+});
+
+test('armed event: fires once when first seen standing, and again only after being disarmed', () => {
+  const m = noAnticipation();
+  m._keepArmed = true;
+  let events = feed(m, hold(172, STAND));
+  assert.deepEqual(types(events), ['armed']);
+  assert.ok(Math.abs(events[0].frame * DT - C.ARM_HOLD_MS) <= DT, 'after ARM_HOLD_MS of standing');
+  // A normal rep re-arms silently: no second blip between reps.
+  events = feed(m, squat(80).slice(STAND));
+  assert.deepEqual(types(events), ['depth', 'rep']);
+  // Tracking interrupted while standing: disarmed, then armed (and announced) again.
+  m.update(172, 0, m._t + 600, DT, true); m._t += 600;
+  assert.deepEqual(types(feed(m, hold(172, STAND))), ['armed']);
 });
 
 test('depth never fires on the frame a descent starts', () => {
@@ -382,7 +396,8 @@ test('tracker: a single-frame glitch is rejected and never reaches the state mac
   angles.forEach((a, i) => {
     const s = t.update(a, i * DT);
     if (!s) { if (i > 0) rejected++; return; } // frame 0 is always held back as a candidate
-    if (m.update(s.angle, s.vel, i * DT, s.dtMs, s.restarted)) events++;
+    const ev = m.update(s.angle, s.vel, i * DT, s.dtMs, s.restarted);
+    if (ev && ev.type !== 'armed') events++;
   });
   assert.equal(rejected, 1);
   assert.equal(events, 0);
@@ -471,7 +486,7 @@ function pipeline(rawAngles, { fps = 60, anticipate = true } = {}) {
     const s = tracker.update(raw, i * dt);
     if (!s) return;
     const ev = m.update(s.angle, s.vel, i * dt, s.dtMs, s.restarted);
-    if (ev) events.push(ev.type);
+    if (ev && ev.type !== 'armed') events.push(ev.type);
   });
   return { events, m };
 }
@@ -610,7 +625,7 @@ test('regression: far leg picked while standing, hidden once the knees bend: the
     const s = tracker.update(raw, i * dt);
     if (!s) return;
     const ev = m.update(s.angle, s.vel, i * dt, s.dtMs, s.restarted);
-    if (ev) events.push(ev.type);
+    if (ev && ev.type !== 'armed') events.push(ev.type);
   });
   assert.deepEqual(events, ['depth', 'rep']);
   assert.equal(picker.side, 'R');

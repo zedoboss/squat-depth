@@ -76,7 +76,7 @@
     background: rgba(0, 0, 0, 0.62); display: flex; flex-direction: column; line-height: 1;
     font-variant-numeric: tabular-nums; pointer-events: none;
   }
-  .hud.angle { left: calc(10px + var(--sal)); align-items: flex-start; }
+  .hud.angle { left: calc(10px + var(--sal)); align-items: flex-start; max-width: 56vw; }
   .hud.reps { right: calc(10px + var(--sar)); align-items: flex-end; text-align: right; }
   .hud .lbl { font-size: calc(3.4 * var(--u)); font-weight: 700; letter-spacing: 0.08em; color: var(--dim); margin: 4px 0; }
   .hud .big { font-size: calc(22 * var(--u)); font-weight: 800; letter-spacing: -0.03em; }
@@ -100,8 +100,6 @@
   }
   .pill { font-size: calc(4.2 * var(--u)); font-weight: 800; padding: calc(1 * var(--u)) calc(2.4 * var(--u)); border-radius: 99px; background: #000; border: 2px solid currentColor; }
   .pill.good { color: var(--good); } .pill.bad { color: var(--bad); } .pill.warn { color: var(--warn); }
-  #rotate { display: none; }
-  @media (orientation: portrait) { #rotate { display: inline-block; } }
   #debug {
     flex-basis: 100%; font: 12px/1.35 ui-monospace, Menlo, monospace; color: #d6dee6;
     background: rgba(0, 0, 0, 0.62); padding: 4px 8px; border-radius: 8px; width: fit-content; max-width: 100%;
@@ -147,10 +145,10 @@
 
   <h2 class="setup-title">SETUP</h2>
   <ol class="setup">
-    <li><b>Phone at your side.</b> Tripod at about hip height, 2&ndash;3&nbsp;m away, landscape. Not behind you: knee angle can't be read from the back.</li>
-    <li><b>Stand sideways to the camera</b>, the same way you'll squat under the bar.</li>
-    <li><b>Whole body in frame</b>, head to feet, at the top and at the bottom of the squat.</li>
-    <li><b>Check the lock before you load up.</b> Wait for the green LOCK pill and the thick line on your camera-side leg, then do one unloaded rep and listen for the ding.</li>
+    <li><b>Phone at your side, upright.</b> Tripod at about hip height, 2&ndash;3&nbsp;m away. Upright (portrait) fits a standing person; sideways only works if the phone is far enough back that your head stays in the picture.</li>
+    <li><b>Stand sideways to the camera</b>, the same way you'll squat under the bar. Not facing it, not with your back to it.</li>
+    <li><b>Head to feet in the picture, standing <i>and</i> at the bottom.</b> If your head is cut off when you stand, the app can't see you standing and the ding comes late or not at all.</li>
+    <li><b>Wait for the double blip.</b> Stand still where you'll squat. Two soft blips and READY mean it has you. No blip: fix the framing first. Then do one unloaded rep and listen for the ding.</li>
     <li><b>Phone speaker, volume up.</b> No Bluetooth: it delays the ding by 150&ndash;300&nbsp;ms.</li>
   </ol>
 </main>
@@ -175,8 +173,7 @@
   <div id="banner" hidden></div>
 
   <div class="bottom">
-    <span id="lock" class="pill bad">NO BODY</span>
-    <span id="rotate" class="pill warn">ROTATE TO LANDSCAPE</span>
+    <span id="lock" class="pill bad">CAN'T SEE YOU HEAD TO FEET</span>
     <span id="audioWarn" class="pill warn" hidden></span>
     <div id="debug" hidden></div>
   </div>
@@ -196,7 +193,8 @@
     <label class="row"><span class="name">Standing / re-arm</span><span class="val" id="vStand"></span>
       <input id="sStand" type="range" step="1">
       <span class="help">You must come back above this to finish the rep and arm the next ding. Lower it if you don't lock out fully.</span></label>
-    <label class="row"><span class="name">Sound</span><input id="sSound" type="checkbox"></label>
+    <label class="row"><span class="name">Sound</span><input id="sSound" type="checkbox">
+      <span class="help">The ding at depth, and two soft blips when it first sees you standing and is ready for a rep.</span></label>
     <label class="row"><span class="name">Buzz on shallow reps</span><input id="sBuzz" type="checkbox"></label>
     <label class="row"><span class="name">Anticipation</span><input id="sAnticipate" type="checkbox">
       <span class="help">Dings one frame early when you're clearly about to cross the target, to cancel some of the pipeline delay.</span></label>
@@ -211,6 +209,7 @@
     <div class="tools">
       <button id="btnTestDing">Test ding</button>
       <button id="btnTestBuzz">Test buzz</button>
+      <button id="btnTestReady">Test ready blip</button>
       <button id="btnReset">Reset counts</button>
       <button id="btnCopyLog">Copy latency log</button>
     </div>
@@ -251,9 +250,9 @@ const SquatCore = (() => {
   const MAX_OUTLIER_STREAK = 2;     // ...unless it persists, then believe it
   const GAP_RESET_MS = 400;         // no samples for this long: tracking was interrupted, start over
   const ARM_HOLD_MS = 250;          // must be seen standing this long before the first ding is armed
-  const DEPTH_HOLD_MS = 400;        // not armed, but held steadily at depth this long: ding anyway (late beats never)
+  const DEPTH_HOLD_MS = 300;        // not armed, but held steadily at depth this long: ding anyway (late beats never)
   const DEPTH_HOLD_RANGE_DEG = 12;  // "steadily": every reading in the hold within this band...
-  const DEPTH_HOLD_MIN_FRAMES = 8;  // ...and at least this many of them
+  const DEPTH_HOLD_MIN_FRAMES = 6;  // ...and at least this many of them
 
   // ===== Is this really a leg we can measure? =====
   const FRAME_MARGIN = 0.02;        // hip/knee/ankle closer than this to the frame edge count as cut off
@@ -399,6 +398,7 @@ const SquatCore = (() => {
    *   { type: 'depth', anticipated, late, angle } -> play the ding NOW
    *   { type: 'rep', minAngle }              -> good rep finished (back to standing)
    *   { type: 'shallow', minAngle }          -> dipped past the shallow line, never hit target
+   *   { type: 'armed' }                      -> seen standing after not being armed: ready for a rep
    *
    * Double dings are impossible by construction: after 'depth' the machine sits in DEPTH and
    * only re-arms once the angle is back above standDeg. The gap between descendDeg and
@@ -449,8 +449,9 @@ const SquatCore = (() => {
         if (angle >= this.standDeg) {
           this._holdSince = null;
           if (this._armSince === null) this._armSince = tMs;
-          if (tMs - this._armSince >= ARM_HOLD_MS) this.state = State.STANDING;
-          return null;
+          if (tMs - this._armSince < ARM_HOLD_MS) return null;
+          this.state = State.STANDING;
+          return { type: 'armed' };
         }
         this._armSince = null;
         // The descent wasn't watched (tracking dropped out on the way down), but he is now sitting
@@ -627,7 +628,7 @@ const nextMpTs = (t) => (mpTs = Math.max(Math.round(t), mpTs + 1));
 
 // ===== Audio: built once on the Start tap, then kept hot =====
 const audio = {
-  ctx: null, dingBuf: null, buzzBuf: null, nextDing: null,
+  ctx: null, dingBuf: null, buzzBuf: null, readyBuf: null, nextDing: null,
 
   /** Must be called synchronously from a tap: iOS only unlocks audio inside a user gesture. */
   unlock() {
@@ -645,6 +646,11 @@ const audio = {
         // Low sawtooth: phone speakers can't do real bass, the harmonics carry it.
         const env = Math.min(1, t / 0.005) * Math.min(1, (0.28 - t) / 0.03);
         return env * 0.5 * (2 * ((t * 175) % 1) - 1);
+      });
+      // Two soft low pips: "I can see you standing, go ahead". Deliberately nothing like the ding.
+      this.readyBuf = this._render(0.2, (t) => {
+        const pip = (t0) => (t >= t0 && t < t0 + 0.05 ? Math.sin(Math.PI * (t - t0) / 0.05) * Math.sin(2 * Math.PI * 520 * t) : 0);
+        return 0.35 * (pip(0) + pip(0.11));
       });
       // A looping near-silent buffer keeps the audio hardware awake, so the ding
       // never pays an output start-up delay.
@@ -675,10 +681,12 @@ const audio = {
     this.nextDing = null;
     setTimeout(() => this._arm(), 0);
   },
-  buzz() {
+  buzz() { this._play(this.buzzBuf); },
+  ready() { this._play(this.readyBuf); },
+  _play(buffer) {
     if (!this.ctx) return;
     const s = this.ctx.createBufferSource();
-    s.buffer = this.buzzBuf; s.connect(this.ctx.destination); s.start();
+    s.buffer = buffer; s.connect(this.ctx.destination); s.start();
   },
   /** Output latency the browser reports, in ms (0 if it doesn't say). */
   latencyMs() {
@@ -909,7 +917,7 @@ function processFrame(meta) {
   const tDet = performance.now();
 
   const points = result.landmarks && result.landmarks[0];
-  let sample = null, side = null, lockText = 'NO BODY', lockCls = 'bad';
+  let sample = null, side = null, lockText = "CAN'T SEE YOU HEAD TO FEET", lockCls = 'bad';
   if (points) {
     const w = video.videoWidth, h = video.videoHeight;
     const problemL = C.legProblem(points, 'L', w, h), problemR = C.legProblem(points, 'R', w, h);
@@ -968,12 +976,12 @@ function processFrame(meta) {
 }
 
 const LEG_PROBLEM_LABEL = {
-  frame: 'STEP BACK · WHOLE BODY IN FRAME',
+  frame: 'PART OF YOU IS OUT OF FRAME',
   hidden: 'LEG HIDDEN',
   shape: 'TURN SIDE-ON',
 };
 const STATE_LABEL = {
-  [C.State.UNKNOWN]: 'STAND TALL TO ARM',
+  [C.State.UNKNOWN]: 'STAND TALL',
   [C.State.STANDING]: 'READY',
   [C.State.DESCENDING]: 'GOING DOWN',
   [C.State.DEPTH]: 'DEPTH ✓ STAND UP',
@@ -996,6 +1004,8 @@ function onRepEvent(ev, sample, tFrame, tCb, tDet, clock) {
     latencyLog.push(entry);
     if (latencyLog.length > LOG_MAX) latencyLog.shift();
     console.log('[squat] ding', JSON.stringify(entry));
+  } else if (ev.type === 'armed') {
+    if (settings.sound) audio.ready();
   } else if (ev.type === 'rep') {
     renderCounts();
     if (ev.anticipated && !ev.confirmed) console.log(`[squat] early ding was not confirmed: min ${ev.minAngle.toFixed(1)}° vs target ${machine.targetDeg}°`);
@@ -1187,6 +1197,7 @@ for (const id of ['sTarget', 'sStand', 'sLead', 'sSound', 'sBuzz', 'sAnticipate'
 }
 $('btnTestDing').addEventListener('click', () => { audio.unlock(); audio.ding(); });
 $('btnTestBuzz').addEventListener('click', () => { audio.unlock(); audio.buzz(); });
+$('btnTestReady').addEventListener('click', () => { audio.unlock(); audio.ready(); });
 $('btnReset').addEventListener('click', () => { machine.resetCounts(); renderCounts(); });
 $('btnCopyLog').addEventListener('click', async () => {
   const text = JSON.stringify({
