@@ -115,7 +115,7 @@
   /* ---------- Settings sheet ---------- */
   #settings { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.7); display: grid; place-items: end center; }
   .sheet {
-    width: min(100%, 640px); max-height: 100dvh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    width: min(100%, 640px); max-height: calc(100dvh - var(--sat)); overflow-y: auto; -webkit-overflow-scrolling: touch; /* stay below the status bar when opened from the Home Screen */
     background: var(--panel); border: 1px solid var(--line); border-radius: 18px 18px 0 0;
     padding: 16px calc(18px + var(--sar)) calc(96px + var(--sab)) calc(18px + var(--sal)); /* room for Safari's floating toolbar */
   }
