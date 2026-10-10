@@ -79,7 +79,7 @@ All saved on the phone.
 
 | Setting | Default | What it does |
 |---|---|---|
-| Target depth | 90° | Knee angle that earns the ding. 60 to 130. Lower is deeper. |
+| Target depth | 75° | Knee angle that earns the ding. 60 to 130. Lower is deeper. Thighs parallel to the floor reads about 70 to 75°, not 90°: the shins lean forward, which closes the knee angle further. A 90° knee is well above parallel. |
 | Standing / re-arm | 160° | You must come back above this to finish the rep and arm the next ding. Lower it if you don't lock out. |
 | Sound | on | Ding and buzz. The green screen flash stays either way. |
 | Buzz on shallow reps | on | Low buzz and "TOO SHALLOW" when a rep misses the target. |
@@ -91,7 +91,7 @@ All saved on the phone.
 
 ## How a rep is judged
 
-The knee angle is the interior angle between hip, knee and ankle in the image (180° is a straight leg). The app uses whichever leg the camera sees better and re-checks that every 3 seconds, never in the middle of a rep.
+The knee angle is the interior angle between hip, knee and ankle in the image (180° is a straight leg). The app measures whichever leg the camera sees better, judged frame by frame from the knee and ankle. Standing side-on, both legs look equally visible; the far leg only disappears behind the near one once the knees bend, so the app can hand over to the other leg in the middle of a rep.
 
 | State | Rule |
 |---|---|
@@ -101,6 +101,7 @@ The knee angle is the interior angle between hip, knee and ankle in the image (1
 | **Depth: ding** | First frame at or below the target, provided the descent was watched from standing. Fires once, immediately. |
 | Rep counted | Back above 160° after a ding. Then it re-arms. |
 | Shallow | Went below 130°, never reached the target, returned above 160°. |
+| Late ding | The descent wasn't seen (tracking dropped out), but you are sitting steadily at or below the target for 0.4 s. It dings then, and the debug line counts it as `late`. |
 
 **A ding needs an unbroken view of the descent.** The pose model will happily invent a skeleton when half of you is out of the picture, so the app refuses to measure unless the hip, knee and ankle are inside the frame (and the shoulder isn't cut off), the joints are visible, and the thigh and shin look like a leg seen from the side. A reading that appears out of nowhere is held back until the next frame agrees with it. And if tracking is interrupted before the ding, or the angle jumps further than a knee can move, the app disarms and waits to see you standing again. The price: if your knee is hidden for more than a moment on the way down, that rep gets no ding. The lock pill tells you why it isn't measuring (`STEP BACK · WHOLE BODY IN FRAME`, `LEG HIDDEN`, `TURN SIDE-ON`).
 
@@ -134,7 +135,7 @@ What the app does about it:
 Two ways to claw back more, both with a cost:
 
 - **Extra anticipation lead.** 50 to 80 ms roughly cancels the camera and speaker delay. The cost: if you brake hard just above the target, you get a ding for a rep that never quite got there. The debug line and the latency log count these as "missed".
-- **Raise the target a few degrees** (say 95° for a true 90°). Simple and predictable, but it also passes reps that stop at 95°.
+- **Raise the target a few degrees** (say 80° for a true 75°). Simple and predictable, but it also passes reps that stop at 80°.
 
 **Bluetooth breaks this.** AirPods and Bluetooth speakers add 150 to 300 ms that the app can't see or cancel. The app shows a warning if the browser reports a slow audio output, but Safari mostly doesn't say, so treat the warning as a bonus, not a guarantee. Use the phone speaker.
 
@@ -161,7 +162,7 @@ To measure the true end-to-end delay, film yourself and the phone with a second 
 node tests/run-tests.mjs
 ```
 
-45 tests with synthetic angle sequences: full rep, shallow rep, jitter around the target and around the standing line, re-arming, starting in a squat, custom thresholds, anticipation (fires one frame early, never on the way up, counts misses, capped lead), single-frame tracking glitches, phantom reps from a half-visible body (stray readings after a dropout, joints outside the frame), filter lag, and a noisy 8-rep set run end to end at 30 and 60 fps. Node 18 or newer, no packages to install.
+50 tests with synthetic angle sequences: full rep, shallow rep, jitter around the target and around the standing line, re-arming, starting in a squat, custom thresholds, anticipation (fires one frame early, never on the way up, counts misses, capped lead), single-frame tracking glitches, phantom reps from a half-visible body (stray readings after a dropout, joints outside the frame), the far leg vanishing mid-rep, the late ding after a hold, filter lag, and a noisy 8-rep set run end to end at 30 and 60 fps. Node 18 or newer, no packages to install.
 
 ## Troubleshooting
 

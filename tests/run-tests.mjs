@@ -44,7 +44,9 @@ function feed(machine, angles, fps = FPS) {
   return events;
 }
 const types = (events) => events.map((e) => e.type);
-const noAnticipation = (cfg = {}) => new RepMachine({ anticipate: false, ...cfg });
+// The synthetic sequences below are written around a 90 degree target, whatever the app's default is.
+const noAnticipation = (cfg = {}) => new RepMachine({ anticipate: false, targetDeg: 90, ...cfg });
+const withAnticipation = (cfg = {}) => new RepMachine({ anticipate: true, targetDeg: 90, ...cfg });
 
 // ---------- Angle math ----------
 
@@ -163,13 +165,39 @@ test('mixed set: good, shallow, good', () => {
   assert.equal(m.shallow, 1);
 });
 
-test('not armed until seen standing: starting in a squat does not ding', () => {
+test('not armed until seen standing: a brief crouch or a pass through depth does not ding', () => {
   const m = noAnticipation();
-  let events = feed(m, hold(80, 30));
+  // Comes into view already low, stays there 300 ms (under DEPTH_HOLD_MS), stands up.
+  let events = feed(m, [...hold(80, 9), ...ramp(80, 172), ...hold(172, STAND)]);
   assert.deepEqual(events, []);
-  assert.equal(m.state, State.UNKNOWN);
-  events = feed(m, [...ramp(80, 172), ...squat(80)]);
+  assert.equal(m.state, State.STANDING);
+  events = feed(m, squat(80).slice(STAND));
   assert.deepEqual(types(events), ['depth', 'rep']);
+});
+
+test('held at depth without a watched descent: one late ding, and the rep counts on stand-up', () => {
+  const m = noAnticipation();
+  const frames = hold(80, 30); // one second sitting at depth
+  const events = feed(m, frames);
+  assert.deepEqual(types(events), ['depth']);
+  assert.equal(events[0].late, true);
+  const heldMs = events[0].frame * DT;
+  assert.ok(heldMs >= C.DEPTH_HOLD_MS && heldMs < C.DEPTH_HOLD_MS + 2 * DT, `late ding after ${heldMs.toFixed(0)} ms`);
+  assert.equal(m.late, 1);
+  assert.deepEqual(types(feed(m, [...ramp(80, 172), ...hold(172, 5)])), ['rep']);
+  assert.equal(m.good, 1);
+  // Hovering just above the target never earns the late ding.
+  const m2 = noAnticipation();
+  assert.deepEqual(feed(m2, hold(95, 60)), []);
+});
+
+test('late ding needs an unbroken hold: an interruption restarts the clock', () => {
+  const m = noAnticipation();
+  feed(m, hold(80, 9));                                   // 300 ms at depth
+  assert.equal(m.update(80, 0, m._t + DT, DT, true), null); // tracking restarted
+  m._t += DT;
+  assert.deepEqual(feed(m, hold(80, 9)), []);             // another 300 ms: still not enough since the restart
+  assert.deepEqual(types(feed(m, hold(80, 6))), ['depth']);
 });
 
 test('resetState mid-rep disarms without touching the counts', () => {
@@ -202,7 +230,7 @@ test('thresholds stay ordered at the slider extremes', () => {
     }
   }
   const junk = new RepMachine({ targetDeg: 'abc', standDeg: 999 });
-  assert.equal(junk.targetDeg, 90);
+  assert.equal(junk.targetDeg, C.TARGET_DEG_DEFAULT);
   assert.equal(junk.standDeg, 175);
 });
 
@@ -250,7 +278,7 @@ test('an interruption before the ding disarms; after the ding it does not', () =
 test('anticipation: dings one frame before the crossing on a steady descent', () => {
   const angles = squat(80);
   const plain = feed(noAnticipation(), angles)[0];
-  const m = new RepMachine({ anticipate: true });
+  const m = withAnticipation();
   const events = feed(m, angles);
   assert.deepEqual(types(events), ['depth', 'rep']);
   assert.equal(events[0].anticipated, true);
@@ -263,7 +291,7 @@ test('anticipation: dings one frame before the crossing on a steady descent', ()
 });
 
 test('anticipation: no early ding on a slow creep toward the target', () => {
-  const m = new RepMachine({ anticipate: true });
+  const m = withAnticipation();
   // 10 deg/s is below ANTICIPATE_MIN_VEL, so the ding must wait for the real crossing.
   const angles = [...hold(172, STAND), ...ramp(172, 100), ...ramp(100, 88, 10), ...ramp(88, 172)];
   const events = feed(m, angles);
@@ -274,14 +302,14 @@ test('anticipation: no early ding on a slow creep toward the target', () => {
 });
 
 test('anticipation: never fires on the way up', () => {
-  const m = new RepMachine({ anticipate: true });
+  const m = withAnticipation();
   // Bottoms out at 93 (above target), then rises: velocity is positive right next to the target.
   const events = feed(m, [...hold(172, STAND), ...ramp(172, 100), ...ramp(100, 93, 15), ...hold(93, 3), ...ramp(93, 172)]);
   assert.deepEqual(types(events), ['shallow']);
 });
 
 test('anticipation: an early ding that never reaches target is counted as missed', () => {
-  const m = new RepMachine({ anticipate: true });
+  const m = withAnticipation();
   // Fast descent that stops dead at 92: the prediction fires, the knee never gets to 90.
   const events = feed(m, [...hold(172, STAND), ...ramp(172, 92, 150), ...hold(92, 5), ...ramp(92, 172)]);
   assert.deepEqual(types(events), ['depth', 'rep']);
@@ -293,7 +321,7 @@ test('anticipation: an early ding that never reaches target is counted as missed
 });
 
 test('anticipation: lead is capped, a velocity spike cannot fire far above target', () => {
-  const m = new RepMachine({ anticipate: true, extraLeadMs: 150 });
+  const m = withAnticipation({ extraLeadMs: 150 });
   m.update(172, 0, 0, DT);
   m.update(172, 0, C.ARM_HOLD_MS, DT);               // armed
   const t = C.ARM_HOLD_MS;
@@ -304,8 +332,8 @@ test('anticipation: lead is capped, a velocity spike cannot fire far above targe
 
 test('anticipation: extra lead fires earlier than one frame', () => {
   const angles = squat(80);
-  const oneFrame = feed(new RepMachine({ anticipate: true }), angles)[0];
-  const extra = feed(new RepMachine({ anticipate: true, extraLeadMs: 60 }), angles)[0];
+  const oneFrame = feed(withAnticipation(), angles)[0];
+  const extra = feed(withAnticipation({ extraLeadMs: 60 }), angles)[0];
   assert.ok(extra.frame < oneFrame.frame);
   assert.ok(oneFrame.frame - extra.frame <= 3, '60 ms at 30 fps is about two more frames');
 });
@@ -408,7 +436,7 @@ test('end to end: noisy 8-rep set at 30 and 60 fps, every ding lands within one 
       const dt = 1000 / fps, period = 3; // seconds per rep
       const lead = 0.5; // seconds of standing before the first rep, so the machine arms
       const truth = (tSec) => tSec < lead ? 172 : 126 + 46 * Math.cos(2 * Math.PI * (tSec - lead) / period); // 172 at the top, 80 at the bottom
-      const tracker = new AngleTracker(), m = new RepMachine({ anticipate });
+      const tracker = new AngleTracker(), m = new RepMachine({ anticipate, targetDeg: 90 });
       const dingTimes = [];
       const frames = Math.round((lead + 8 * period) * fps);
       for (let i = 0; i <= frames; i++) {
@@ -436,7 +464,7 @@ test('end to end: noisy 8-rep set at 30 and 60 fps, every ding lands within one 
 
 /** Run raw angles (null = no usable pose that frame) through tracker + machine, like the app does. */
 function pipeline(rawAngles, { fps = 60, anticipate = true } = {}) {
-  const dt = 1000 / fps, tracker = new AngleTracker(), m = new RepMachine({ anticipate });
+  const dt = 1000 / fps, tracker = new AngleTracker(), m = new RepMachine({ anticipate, targetDeg: 90 });
   const events = [];
   rawAngles.forEach((raw, i) => {
     if (raw === null) return;
@@ -532,25 +560,64 @@ function landmarks(visL, visR) {
   return lm;
 }
 
-test('side picker: picks the more visible leg', () => {
-  assert.equal(new SidePicker().update(landmarks(0.9, 0.4), 0), 'L');
-  assert.equal(new SidePicker().update(landmarks(0.3, 0.8), 0), 'R');
+test('side picker: starts on the more visible leg, or the only usable one', () => {
+  assert.equal(new SidePicker().update(landmarks(0.9, 0.4)), 'L');
+  assert.equal(new SidePicker().update(landmarks(0.3, 0.8)), 'R');
+  assert.equal(new SidePicker().update(landmarks(0.9, 0.4), false, true), 'R');
 });
 
-test('side picker: switches only at re-evaluation, on the average, and never mid-rep', () => {
+test('side picker: switches to a clearly better leg after a few frames, not on a flicker', () => {
   const p = new SidePicker();
-  p.update(landmarks(0.9, 0.4), 0);
-  // One flickering frame is not enough.
-  p.update(landmarks(0.2, 0.9), 100);
+  p.update(landmarks(0.6, 0.55));
   assert.equal(p.side, 'L');
-  // Right leg clearly better for a while, but a rep is in progress (canSwitch = false).
-  let t = 100;
-  for (; t < 1500; t += 33) p.update(landmarks(0.3, 0.9), t, false);
+  // One frame where the other leg looks better, then back: no switch.
+  p.update(landmarks(0.3, 0.8)); p.update(landmarks(0.6, 0.55));
   assert.equal(p.side, 'L');
-  // Rep over: switch at the next evaluation.
-  p.update(landmarks(0.3, 0.9), t, true);
+  // Nearly equal visibility (inside the margin) never switches.
+  for (let i = 0; i < 100; i++) p.update(landmarks(0.6, 0.7));
+  assert.equal(p.side, 'L');
+  // Clearly better for SIDE_SWITCH_FRAMES in a row: switch.
+  for (let i = 0; i < C.SIDE_SWITCH_FRAMES - 1; i++) p.update(landmarks(0.45, 0.75));
+  assert.equal(p.side, 'L');
+  p.update(landmarks(0.45, 0.75));
   assert.equal(p.side, 'R');
-  // Nearly equal visibility does not flip it back (margin).
-  for (t += 33; t < 12000; t += 33) p.update(landmarks(0.82, 0.8), t, true);
-  assert.equal(p.side, 'R');
+});
+
+test('side picker: leaves an unusable leg immediately when the other one is fine', () => {
+  const p = new SidePicker();
+  p.update(landmarks(0.6, 0.55));
+  assert.equal(p.update(landmarks(0.3, 0.7), false, true), 'R'); // far leg went behind the near one
+  // ...but stays put if the other leg is unusable too.
+  const q = new SidePicker();
+  q.update(landmarks(0.6, 0.55));
+  assert.equal(q.update(landmarks(0.2, 0.9), false, false), 'L');
+});
+
+test('regression: far leg picked while standing, hidden once the knees bend: the rep still dings', () => {
+  // What happened on the phone: both legs look alike standing, the far (left) one is picked, then it
+  // disappears behind the near leg during the descent. The picker must hand over without losing the rep.
+  const fps = 60, dt = 1000 / fps;
+  const angles = squat(70, 120).flatMap((a, i, arr) => [a, i + 1 < arr.length ? (a + arr[i + 1]) / 2 : a]);
+  const picker = new SidePicker(), tracker = new AngleTracker(), m = new RepMachine({ anticipate: false, targetDeg: 75 });
+  const events = [];
+  angles.forEach((angle, i) => {
+    const bent = angle < 150;
+    const lm = landmarks(bent ? 0.3 : 0.57, bent ? 0.7 : 0.5);   // left is the far leg
+    const okL = !bent, okR = true;                               // far leg drops under MIN_VISIBILITY when bent
+    const side = picker.update(lm, okL, okR);
+    if (!(side === 'L' ? okL : okR)) return;
+    const raw = side === 'L' ? angle + 4 : angle;                // the two legs read a few degrees apart
+    const s = tracker.update(raw, i * dt);
+    if (!s) return;
+    const ev = m.update(s.angle, s.vel, i * dt, s.dtMs, s.restarted);
+    if (ev) events.push(ev.type);
+  });
+  assert.deepEqual(events, ['depth', 'rep']);
+  assert.equal(picker.side, 'R');
+  assert.equal(m.late, 0, 'a normal ding, not the late fallback');
+});
+
+test('default target is 75 degrees', () => {
+  assert.equal(C.TARGET_DEG_DEFAULT, 75);
+  assert.equal(new RepMachine().targetDeg, 75);
 });

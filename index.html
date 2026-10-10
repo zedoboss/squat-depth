@@ -192,7 +192,7 @@
     <h2>Settings <button id="btnCloseSettings">Done</button></h2>
     <label class="row"><span class="name">Target depth</span><span class="val" id="vTarget"></span>
       <input id="sTarget" type="range" step="1">
-      <span class="help">Knee angle that earns the ding. Lower = deeper. 90&deg; is a right angle at the knee.</span></label>
+      <span class="help">Knee angle that earns the ding. Lower = deeper. Thighs parallel to the floor reads about 70&ndash;75&deg;; 90&deg; is well above parallel.</span></label>
     <label class="row"><span class="name">Standing / re-arm</span><span class="val" id="vStand"></span>
       <input id="sStand" type="range" step="1">
       <span class="help">You must come back above this to finish the rep and arm the next ding. Lower it if you don't lock out fully.</span></label>
@@ -226,7 +226,8 @@ const SquatCore = (() => {
   'use strict';
 
   // ===== Thresholds (degrees). The numbers that decide what counts as a rep. =====
-  const TARGET_DEG_DEFAULT = 90;    // knee angle that earns the ding
+  const TARGET_DEG_DEFAULT = 75;    // knee angle that earns the ding. Thighs parallel reads about 70-75,
+                                    // not 90: the shins lean forward, which closes the knee angle further.
   const TARGET_DEG_MIN = 60;
   const TARGET_DEG_MAX = 130;
   const STAND_DEG_DEFAULT = 160;    // above this = standing; also the re-arm threshold
@@ -250,6 +251,9 @@ const SquatCore = (() => {
   const MAX_OUTLIER_STREAK = 2;     // ...unless it persists, then believe it
   const GAP_RESET_MS = 400;         // no samples for this long: tracking was interrupted, start over
   const ARM_HOLD_MS = 250;          // must be seen standing this long before the first ding is armed
+  const DEPTH_HOLD_MS = 400;        // not armed, but held steadily at depth this long: ding anyway (late beats never)
+  const DEPTH_HOLD_RANGE_DEG = 12;  // "steadily": every reading in the hold within this band...
+  const DEPTH_HOLD_MIN_FRAMES = 8;  // ...and at least this many of them
 
   // ===== Is this really a leg we can measure? =====
   const FRAME_MARGIN = 0.02;        // hip/knee/ankle closer than this to the frame edge count as cut off
@@ -257,10 +261,11 @@ const SquatCore = (() => {
   const LIMB_RATIO_MAX = 2.0;       // far outside that, the pose is a guess or not side-on
 
   // ===== Side selection =====
-  const SIDE_REEVAL_MS = 3000;      // re-pick left/right leg this often
-  const SIDE_SWITCH_MARGIN = 0.05;  // other leg must be this much more visible to switch
-  const SIDE_FIRST_EVAL_MS = 500;   // first re-check comes early, the first frame is a guess
-  const MIN_VISIBILITY = 0.5;       // hip/knee/ankle below this: don't trust the angle
+  // Standing side-on, the model rates both legs about equally visible. Only once the knees bend
+  // does the far leg disappear behind the near one, so the choice has to be able to change mid-rep.
+  const SIDE_SWITCH_MARGIN = 0.15;  // other leg's knee and ankle must be this much more visible...
+  const SIDE_SWITCH_FRAMES = 3;     // ...for this many frames in a row (immediately if the current leg is unusable)
+  const MIN_VISIBILITY = 0.4;       // hip/knee/ankle below this: don't trust the angle
   const LEG = { L: [23, 25, 27], R: [24, 26, 28] }; // MediaPipe indices: hip, knee, ankle
   const SHOULDER = { L: 11, R: 12 };
 
@@ -391,7 +396,7 @@ const SquatCore = (() => {
   /**
    * The rep state machine. Feed it one filtered angle per frame.
    * update() returns at most one event:
-   *   { type: 'depth', anticipated, angle }  -> play the ding NOW
+   *   { type: 'depth', anticipated, late, angle } -> play the ding NOW
    *   { type: 'rep', minAngle }              -> good rep finished (back to standing)
    *   { type: 'shallow', minAngle }          -> dipped past the shallow line, never hit target
    *
@@ -420,13 +425,14 @@ const SquatCore = (() => {
     resetState() {
       this.state = State.UNKNOWN;
       this.minAngle = Infinity;
-      this._armSince = null;
+      this._armSince = null; this._holdSince = null; this._holdLo = 0; this._holdHi = 0; this._holdFrames = 0;
       this._anticipated = false; this._confirmed = false; this._depthT = 0;
     }
     resetCounts() {
       this.resetState();
       this.good = 0; this.shallow = 0; this.lastMin = null;
       this.dings = 0;               // total dings
+      this.late = 0;                // dings given late, after a hold at depth, because the descent wasn't seen
       this.early = 0;               // dings fired by anticipation, before angle <= target
       this.earlyMissed = 0;         // ...where the knee then never actually reached target
       this.earlyLeadSumMs = 0;      // for confirmed early dings: how far ahead of the real crossing
@@ -440,10 +446,25 @@ const SquatCore = (() => {
       // the stand-up), but before it, what we see now may not continue what we saw before.
       if (restarted && this.state !== State.DEPTH) this.resetState();
       if (this.state === State.UNKNOWN) {
-        if (angle < this.standDeg) { this._armSince = null; return null; }
-        if (this._armSince === null) this._armSince = tMs;
-        if (tMs - this._armSince >= ARM_HOLD_MS) this.state = State.STANDING;
-        return null;
+        if (angle >= this.standDeg) {
+          this._holdSince = null;
+          if (this._armSince === null) this._armSince = tMs;
+          if (tMs - this._armSince >= ARM_HOLD_MS) this.state = State.STANDING;
+          return null;
+        }
+        this._armSince = null;
+        // The descent wasn't watched (tracking dropped out on the way down), but he is now sitting
+        // steadily at depth. Under a loaded bar a late ding beats none, so give it once it has held.
+        if (angle > this.targetDeg) { this._holdSince = null; return null; }
+        if (this._holdSince !== null) {
+          this._holdLo = Math.min(this._holdLo, angle); this._holdHi = Math.max(this._holdHi, angle);
+          if (this._holdHi - this._holdLo > DEPTH_HOLD_RANGE_DEG) this._holdSince = null; // still moving: start again from here
+        }
+        if (this._holdSince === null) { this._holdSince = tMs; this._holdLo = this._holdHi = angle; this._holdFrames = 0; }
+        this._holdFrames++;
+        if (tMs - this._holdSince < DEPTH_HOLD_MS || this._holdFrames < DEPTH_HOLD_MIN_FRAMES) return null;
+        this.minAngle = this._holdLo;
+        return this._depth(false, angle, tMs, true);
       }
       if (this.state === State.STANDING) {
         if (angle < this.descendDeg) { this.state = State.DESCENDING; this.minAngle = angle; }
@@ -483,40 +504,41 @@ const SquatCore = (() => {
       }
       return null;
     }
-    _depth(anticipated, angle, tMs) {
+    _depth(anticipated, angle, tMs, late = false) {
       this.state = State.DEPTH;
       this.dings++;
       if (anticipated) this.early++;
+      if (late) this.late++;
       this._anticipated = anticipated; this._confirmed = false; this._depthT = tMs;
-      return { type: 'depth', anticipated, angle };
+      return { type: 'depth', anticipated, late, angle };
     }
   }
 
-  /** Picks the leg (L/R) the camera sees best, re-evaluated every few seconds. */
+  /**
+   * Picks the leg (L/R) to measure, frame by frame, with hysteresis so it doesn't flap.
+   * The tracker is deliberately not reset on a switch: in a side view both knees read within a few
+   * degrees of each other, and if they don't, the tracker's own jump guard treats it as an interruption.
+   */
   class SidePicker {
     constructor() { this.reset(); }
-    reset() { this.side = null; this.sumL = 0; this.sumR = 0; this.n = 0; this.nextEval = 0; }
-    static legVisibility(lm, side) {
-      const [h, k, a] = LEG[side];
-      return ((lm[h].visibility ?? 0) + (lm[k].visibility ?? 0) + (lm[a].visibility ?? 0)) / 3;
+    reset() { this.side = null; this.streak = 0; }
+    /** How well the lower leg is seen. The hip scores ~1 on both sides whatever happens, so it is left out. */
+    static score(lm, side) {
+      const [, k, a] = LEG[side];
+      return Math.min(lm[k].visibility ?? 0, lm[a].visibility ?? 0);
     }
-    /** @param canSwitch pass false mid-rep so the angle never jumps legs during a squat */
-    update(lm, tMs, canSwitch = true) {
-      const vl = SidePicker.legVisibility(lm, 'L'), vr = SidePicker.legVisibility(lm, 'R');
-      if (this.side === null || tMs < this.nextEval - SIDE_REEVAL_MS) {
-        this.side = vl >= vr ? 'L' : 'R';
-        this.sumL = this.sumR = this.n = 0;
-        this.nextEval = tMs + SIDE_FIRST_EVAL_MS;
+    /** @param okL,okR whether each leg is measurable right now (legProblem() returned null) */
+    update(lm, okL = true, okR = true) {
+      const score = { L: SidePicker.score(lm, 'L'), R: SidePicker.score(lm, 'R') }, ok = { L: okL, R: okR };
+      if (this.side === null) {
+        this.side = okL !== okR ? (okL ? 'L' : 'R') : (score.L >= score.R ? 'L' : 'R');
+        this.streak = 0;
         return this.side;
       }
-      this.sumL += vl; this.sumR += vr; this.n++;
-      if (tMs >= this.nextEval && canSwitch) {
-        const avgL = this.sumL / this.n, avgR = this.sumR / this.n;
-        if (this.side === 'L' && avgR > avgL + SIDE_SWITCH_MARGIN) this.side = 'R';
-        else if (this.side === 'R' && avgL > avgR + SIDE_SWITCH_MARGIN) this.side = 'L';
-        this.sumL = this.sumR = this.n = 0;
-        this.nextEval = tMs + SIDE_REEVAL_MS;
-      }
+      const cur = this.side, other = cur === 'L' ? 'R' : 'L';
+      const better = ok[other] && (!ok[cur] || score[other] > score[cur] + SIDE_SWITCH_MARGIN);
+      this.streak = better ? this.streak + 1 : 0;
+      if (better && (!ok[cur] || this.streak >= SIDE_SWITCH_FRAMES)) { this.side = other; this.streak = 0; }
       return this.side;
     }
   }
@@ -526,7 +548,7 @@ const SquatCore = (() => {
     TARGET_DEG_DEFAULT, TARGET_DEG_MIN, TARGET_DEG_MAX,
     STAND_DEG_DEFAULT, STAND_DEG_MIN, STAND_DEG_MAX,
     DESCEND_MARGIN_DEG, SHALLOW_DEG, MIN_VISIBILITY, MAX_DEG_PER_SEC,
-    ANTICIPATE_MIN_VEL, ANTICIPATE_MAX_DEG, SIDE_REEVAL_MS, GAP_RESET_MS, ARM_HOLD_MS, FRAME_MARGIN,
+    ANTICIPATE_MIN_VEL, ANTICIPATE_MAX_DEG, SIDE_SWITCH_MARGIN, SIDE_SWITCH_FRAMES, GAP_RESET_MS, ARM_HOLD_MS, DEPTH_HOLD_MS, FRAME_MARGIN,
   };
 })();
 </script>
@@ -559,7 +581,7 @@ const SHALLOW_BANNER_MS = 1500;
 const AUDIO_LATENCY_WARN_MS = 60;           // reported output latency above this smells like Bluetooth
 const BLUETOOTH_LABEL_RE = /bluetooth|airpods|buds|beats|headphone|headset|hands-?free/i;
 const LOG_MAX = 300;
-const SETTINGS_KEY = 'squat-depth-settings-v1';
+const SETTINGS_KEY = 'squat-depth-settings-v2'; // v2: default target moved from 90 to 75
 
 const DEFAULT_SETTINGS = {
   targetDeg: C.TARGET_DEG_DEFAULT,
@@ -889,10 +911,10 @@ function processFrame(meta) {
   const points = result.landmarks && result.landmarks[0];
   let sample = null, side = null, lockText = 'NO BODY', lockCls = 'bad';
   if (points) {
-    const prevSide = sidePicker.side;
-    side = sidePicker.update(points, tSample, machine.idle);
-    if (prevSide && side !== prevSide) tracker.reset();
-    const problem = C.legProblem(points, side, video.videoWidth, video.videoHeight);
+    const w = video.videoWidth, h = video.videoHeight;
+    const problemL = C.legProblem(points, 'L', w, h), problemR = C.legProblem(points, 'R', w, h);
+    side = sidePicker.update(points, !problemL, !problemR);
+    const problem = side === 'L' ? problemL : problemR;
     if (!problem) {
       const [h, k, a] = C.LEG[side];
       const raw = C.kneeAngle(points[h], points[k], points[a], video.videoWidth, video.videoHeight);
@@ -963,7 +985,7 @@ function onRepEvent(ev, sample, tFrame, tCb, tDet, clock) {
     const tDing = performance.now();
     flash('hit');
     const entry = {
-      ding: machine.dings, anticipated: ev.anticipated,
+      ding: machine.dings, anticipated: ev.anticipated, late: ev.late,
       angle: +sample.angle.toFixed(1), velDegPerSec: +sample.vel.toFixed(0),
       frameClock: clock,                       // what tFrame means: capture | present | callback
       tFrame: +tFrame.toFixed(1), tCallback: +tCb.toFixed(1), tDetectDone: +tDet.toFixed(1), tDingScheduled: +tDing.toFixed(1),
@@ -1032,11 +1054,12 @@ function renderDebug() {
       (machine.earlyConfirmed ? ` (~${Math.round(machine.earlyLeadSumMs / machine.earlyConfirmed)} ms)` : '') +
       (machine.earlyMissed ? ` ${machine.earlyMissed} missed` : '')
     : '';
+  const late = machine.late ? ` · late ${machine.late}` : '';
   $('debug').textContent =
     `${stats.fps.toFixed(0)} fps · infer ${stats.inferMs.toFixed(0)} ms · ${frameLabel} ${stats.frameToDoneMs.toFixed(0)} ms` +
     ` · ${run.camera} · ${pose.delegate} ${pose.model}` +
     ` · audio +${audio.latencyMs().toFixed(0)} ms · drop ${stats.dropped}${stats.stale ? ' stale ' + stats.stale : ''}` +
-    `${wakeLock ? ' · awake' : ''}${early}`;
+    `${wakeLock ? ' · awake' : ''}${early}${late}`;
 }
 
 let flashTimer = 0, bannerTimer = 0;
@@ -1170,7 +1193,7 @@ $('btnCopyLog').addEventListener('click', async () => {
     when: new Date().toISOString(), userAgent: navigator.userAgent, settings, camera: run.camera,
     delegate: pose.delegate, model: pose.model, warmupMs: Math.round(stats.warmupMs),
     fps: +stats.fps.toFixed(1), inferMs: +stats.inferMs.toFixed(1), droppedFrames: stats.dropped, staleFrames: stats.stale,
-    dings: machine.dings, earlyDings: machine.early, earlyMissed: machine.earlyMissed,
+    dings: machine.dings, lateDings: machine.late, earlyDings: machine.early, earlyMissed: machine.earlyMissed,
     earlyAvgLeadMs: machine.earlyConfirmed ? +(machine.earlyLeadSumMs / machine.earlyConfirmed).toFixed(1) : null,
     log: latencyLog,
   }, null, 1);
